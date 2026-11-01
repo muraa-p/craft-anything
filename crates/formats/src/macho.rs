@@ -472,7 +472,10 @@ fn method_list(data: &[u8], b: &Binary, list: u64, kind: &'static str, out: &mut
         return;
     }
     for i in 0..u64::from(count).min(MAX_METHODS as u64) {
-        let e = list + 8 + i * entsize;
+        let Some(e) = list.checked_add(8).and_then(|base| base.checked_add(i * entsize)) else {
+            // A segment ending near u64::MAX overflows the pointer arithmetic: skip it safely.
+            break;
+        };
         if relative {
             let Some(raw) = b.read(data, e, 12) else { break };
             let rr = Reader::new(raw);

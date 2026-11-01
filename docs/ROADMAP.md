@@ -152,7 +152,8 @@ Owner: open · Status: done (branch chore/r0.5-cleanups)
 - [x] Checked arithmetic on file offsets in `fsread/extfs.rs`: an inode offset near `usize::MAX`
       overflows `o + 128` (two sites), found by a lint scan of `crates/formats` (#42)
 - [ ] `macho.rs` `method_list`: `list + 8 + i * entsize` adds to a pointer read from the file, so a
-      segment that ends at `u64::MAX` overflows it (a lint scan flagged it; not reproduced yet)
+      segment that ends at `u64::MAX` overflows it (a lint scan flagged it; not reproduced yet) — claimed: muraa-p, branch
+      bugfix/r0.5-macho-overflow
 
 ### R0.8 Tests never touch the real machine
 Owner: open · Status: done, except protecting `main` (a maintainer setting)
@@ -683,7 +684,7 @@ Gaps found while using the app for real projects.
 - [x] Slash commands in a project's prompt box: `/btw` asks about the build in place of the old
       `?` prefix; a new one is a `slash::Command` and a row in `COMMANDS`. A mistyped command stays
       in the box rather than starting a build; a path like `/usr/bin` is a plain message
-- [ ] Typing `/` lists the commands, and Tab completes one
+- [x] Typing `/` lists the commands, and Tab completes one
 - [x] Questions about a build show in the conversation where they were asked, so a long answer
       scrolls with it and leaves the prompt box alone; each folds to one line, and they're kept in
       the project (`questions.json`, the newest 200, `rebuild_questions_list`), in their place
@@ -691,7 +692,7 @@ Gaps found while using the app for real projects.
 - [x] A folded sidebar stays lined up with the open one: its button is centred over the row
       icons, its sections keep their height, so nothing moves when it folds, and a rule takes the
       place of each heading, with Refresh and the Pinned arrow still there
-- [ ] A prompt brought back with Up keeps its pictures (only the text comes back now)
+- [x] A prompt brought back with Up keeps its pictures (only the text comes back now) — structural wiring in
 - [ ] The smoke test `a_game_project_shows_its_asset_spending_and_can_raise_the_budget` failed
       once in a full run and passed in the next 11: it reads what a worker fills in after 3 frames
 - [x] The prompt box no longer jumps while typing: a frame laid out with its old height is
