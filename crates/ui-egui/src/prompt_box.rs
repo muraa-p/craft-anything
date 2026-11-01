@@ -3,7 +3,8 @@
 //! has the attach, stop and send buttons in its bottom row. Up at the start of the box takes back
 //! the last message still waiting, to edit it; with none waiting, Up at the very start and Down at
 //! the very end go through earlier prompts, and Down past the newest brings back what was being
-//! typed. Anywhere else they move the cursor as usual.
+//! typed. Anywhere else they move the cursor as usual. While a command is being typed (`/`, `/b`), it
+//! lists the commands that could be it, and Tab completes one.
 
 use crate::i18n::{tr, trf};
 use crate::theme::{self, Tokens};
@@ -105,6 +106,7 @@ pub struct PromptOut {
     pub remove: Option<usize>,
 }
 
+#[allow(clippy::collapsible_if)]
 pub fn show(ui: &mut Ui, text: &mut String, attachments: &[PathBuf], b: PromptBox) -> PromptOut {
     let t = Tokens::get(ui.ctx());
     let mut out = PromptOut::default();
@@ -157,6 +159,16 @@ pub fn show(ui: &mut Ui, text: &mut String, attachments: &[PathBuf], b: PromptBo
             } else if let Some(history) = b.history.filter(|_| focused && !b.recall) {
                 browse(ui, id, text, history);
             }
+            // While a command is being typed (`/`, `/b`), the box lists the commands it could be,
+            // and Tab completes one.
+            let commands = if focused { crate::slash::completions(text) } else { None };
+            let tab = focused && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab));
+            if tab {
+                if let Some(completed) = crate::slash::complete(text) {
+                    *text = completed;
+                    cursor_to_end(ui.ctx(), id, text);
+                }
+            }
             // No "more below" fade: the frame after each keystroke the scroll area briefly
             // measures a few points of overflow, and the fade blinked over the line being typed.
             ui.spacing_mut().scroll.fade.strength = 0.0;
@@ -173,6 +185,29 @@ pub fn show(ui: &mut Ui, text: &mut String, attachments: &[PathBuf], b: PromptBo
                         .return_key(Some(egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::Enter))),
                 );
                 widgets::named(r.clone(), b.name);
+                let offering = r.has_focus() && commands.as_ref().is_some_and(|c| !c.is_empty());
+                if offering && !ui.input_mut(|i| i.key_pressed(egui::Key::Escape)) {
+                    // The list of what could be typed, offered while a command is being typed; Tab
+                    // completes one, and picking one fills the box.
+                    let mut open = true;
+                    let popup_id = ui.id().with("slash-commands");
+                    let _ = egui::containers::Popup::new(
+                        popup_id,
+                        ui.ctx().clone(),
+                        egui::containers::PopupAnchor::from(&r),
+                        egui::LayerId::new(egui::Order::Foreground, popup_id),
+                    )
+                    .open_bool(&mut open)
+                    .close_behavior(egui::containers::PopupCloseBehavior::CloseOnClickOutside)
+                    .show(|list_ui| {
+                        for command in commands.iter().flatten() {
+                            let response = list_ui.button(command.as_str());
+                            if response.clicked() {
+                                *text = command.clone();
+                            }
+                        }
+                    });
+                }
                 if r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift) && !text.trim().is_empty() {
                     out.send = true;
                 }
