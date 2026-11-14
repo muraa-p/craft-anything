@@ -284,7 +284,7 @@ impl Engine {
         // A model sometimes writes a number or a boolean as text (`"limit": "200"`): where the
         // tool's schema says the value is one, it's read as one rather than refused. A builder
         // used to retry the refused call until the run was out of room (#1825).
-        let params = tool::params_as_schema(&(spec.input_schema)(), params);
+        let params = tool::params_as_schema(&self.registry.input_schema(&spec), params);
         let run = spec.run;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut ctx = Ctx { tool: spec.id, session: &mut session, cancel: opts.cancel.clone(), progress: opts.progress, caller: opts.caller };
@@ -412,5 +412,11 @@ mod tests {
         assert_eq!(serde_json::to_value(group).unwrap(), "demo_plugin");
         assert!(custom_toolset("No Spaces").is_none());
         assert_eq!(custom_toolset("core"), Some(Toolset::Core), "a built-in id is the built-in group");
+        // A run-time tool's params follow the schema it was registered with, as a built-in tool's
+        // do: its number written as text is read as a number, its text stays text (#1825).
+        let numeric = tool("demo_four", serde_json::json!({"type": "object", "properties": {"count": {"type": "integer"}, "note": {"type": "string"}}}));
+        let e = Engine::shared_with(crate::testing::session(), Vec::new(), vec![numeric]);
+        let out = e.call("demo_four", serde_json::json!({"count": "200", "note": "200"}), CallOptions::new(Caller::Cli)).unwrap().to_json();
+        assert_eq!(out["result"]["params"], serde_json::json!({"count": 200, "note": "200"}));
     }
 }
