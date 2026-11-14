@@ -785,6 +785,25 @@ mod tests {
         assert_eq!(Workspace::open(&ws.root).unwrap().manifest.builder, None);
     }
 
+    /// Clean room is the default mode, and this tool reads and writes only the project's own
+    /// choice, so it runs there: the chosen builder is part of the project, not the target.
+    #[test]
+    fn a_builder_is_chosen_in_clean_room() {
+        let d = tempfile::tempdir().unwrap();
+        let mut s = craft_anything_engine::testing::session();
+        s.settings.deep_mode = false;
+        assert!(s.clean_room());
+        s.settings.ai = toml::from_str("[[backends]]\nname = \"Claude\"\nkind = \"anthropic\"\nmodel = \"claude-test\"\n").unwrap();
+        let e = Engine::shared(s, specs());
+        let ws = Workspace::create(d.path(), "Notes", "A notes app", TargetRef::None).unwrap();
+        let set = e
+            .call("project_builder_set", json!({"project": ws.root, "builder": "Claude"}), CallOptions::new(Caller::Cli))
+            .map(|o| o.to_json()["result"].clone())
+            .unwrap();
+        assert_eq!(set["builder"], "Claude");
+        assert_eq!(Workspace::open(&ws.root).unwrap().manifest.builder.as_deref(), Some("Claude"));
+    }
+
     /// With nothing able to build, the tool still reads the choice and still accepts `default`:
     /// the answer says no AI builds instead of failing after the project changed.
     #[test]
