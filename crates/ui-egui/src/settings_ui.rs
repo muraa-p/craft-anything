@@ -1125,11 +1125,31 @@ fn safety(app: &mut CraftApp, ui: &mut Ui) {
     }
 }
 
+/// What to tell the person at startup when their settings couldn't be loaded: `why` names the
+/// file, and the rest says what that means until it's fixed. `None` when they loaded. English for
+/// now: the wording needs a native speaker's check before it joins the catalogs.
+pub(crate) fn not_loaded_warning(settings: &craft_anything_engine::Settings) -> Option<String> {
+    let why = settings.not_loaded.as_deref()?;
+    Some(format!("{why}. Until that's fixed, Craft Anything uses its default settings and won't save over it."))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{Done, builders::AgentModelPicker, demo, jobs::Finished};
     use craft_anything_ai::{BackendConfig, BackendKind};
+
+    /// Settings that couldn't be loaded say so where the person is looking, with the file's name.
+    #[test]
+    fn settings_that_didnt_load_are_said_at_startup() {
+        let loaded = craft_anything_engine::Settings::default();
+        assert_eq!(not_loaded_warning(&loaded), None);
+        let why = r"C:\Users\me\AppData\Roaming\Craft Anything\config.toml couldn't be read (access denied)";
+        let standing_in = craft_anything_engine::Settings { not_loaded: Some(why.into()), ..Default::default() };
+        let said = not_loaded_warning(&standing_in).unwrap();
+        assert!(said.contains("config.toml") && said.contains("access denied"), "{said}");
+        assert!(said.contains("won't save over it"), "{said}");
+    }
 
     #[test]
     /// A non-Codex local agent gets the same Check action and result presentation.

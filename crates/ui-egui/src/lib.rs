@@ -601,7 +601,7 @@ impl CraftApp {
         // next settings change would save them over the person's own.
         let settings = engine.session().settings.clone();
         i18n::set_language(&settings.language);
-        CraftApp {
+        let mut app = CraftApp {
             #[cfg(not(target_arch = "wasm32"))]
             updates: Default::default(),
             engine,
@@ -681,7 +681,13 @@ impl CraftApp {
             last_view: None,
             applied_theme: None,
             started: false,
+        };
+        // A config.toml that couldn't be read or set aside is said here, where the person is
+        // looking, and not only in the log: every save is refused until it's fixed.
+        if let Some(said) = settings_ui::not_loaded_warning(&app.settings) {
+            app.toast(said, true);
         }
+        app
     }
 
     /// Fonts and image loaders; call once with the egui context.

@@ -1593,8 +1593,9 @@ Gaps found while using the app for real projects.
       round trip. Tested on Windows with a file held without sharing; the Unix permission test
       wasn't run here
       — claimed: hichang4u, branch bugfix/r2.9-config-not-loaded
-- [ ] When config.toml wasn't loaded (`Settings::not_loaded`), the app says so only in the log and
-      when a save fails: say it at startup where the person is looking, with the file's name
+- [x] When config.toml wasn't loaded (`Settings::not_loaded`), the app says so at startup where
+      the person is looking, with the file's name and why, and that nothing is saved over it
+      (`settings_ui::not_loaded_warning`); English only for now, like the builder notice
 - [x] A config.toml that can't be read for a moment at startup (a virus scan or another program
       holding it) isn't tried again, so the whole session runs on defaults and refuses every save:
       try the read again for a short while before giving up
