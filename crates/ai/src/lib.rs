@@ -448,6 +448,12 @@ impl AiHub {
         self.settings_path.clone().unwrap_or_else(Settings::path)
     }
 
+    /// Where a failed model turn writes its log: `logs/` beside the settings file, as an agent
+    /// CLI's failures do (see [`failure_log`]).
+    fn failure_logs(&self) -> Option<PathBuf> {
+        self.settings_path().parent().map(failure_log::dir_in)
+    }
+
     /// The current AI configuration. Never blocks on a running tool: if the session is busy the
     /// saved settings file is read instead.
     pub fn config(&self) -> AiConfig {
@@ -1066,7 +1072,8 @@ impl AiHub {
             }
         }
         let host = Arc::new(EngineHost(self.engine.clone()));
-        let conv = ApiConversation::start(host, chain, LoopConfig { beginner, prices: cfg.prices.clone(), ..LoopConfig::default() })?;
+        let conv =
+            ApiConversation::start(host, chain, LoopConfig { beginner, prices: cfg.prices.clone(), logs: self.failure_logs(), ..LoopConfig::default() })?;
         Ok(Box::new(conv))
     }
 
@@ -1104,7 +1111,7 @@ impl AiHub {
         ApiConversation::start_with(
             host,
             vec![slot],
-            LoopConfig { beginner, prices: self.config().prices.clone(), transcript, deep, lean_for_local, ..LoopConfig::default() },
+            LoopConfig { beginner, prices: self.config().prices.clone(), transcript, deep, lean_for_local, logs: self.failure_logs(), ..LoopConfig::default() },
             toolsets.iter().copied().collect(),
         )
     }

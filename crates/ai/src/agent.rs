@@ -274,12 +274,36 @@ pub struct LoopConfig {
     /// A builder conversation: it may be offered the tools for building rather than the whole Core
     /// set, as each backend's tool list says (see [`offers_lean`] and [`lean_for_local`]).
     pub lean_for_local: bool,
+    /// Where a model turn that failed writes a failure log (`logs/` in the config folder), as an
+    /// agent CLI's failure does. `None`: no log (a test, or a fork's loop).
+    pub logs: Option<std::path::PathBuf>,
 }
 
 impl Default for LoopConfig {
     /// Deep, so a conversation started without an explicit mode keeps the old, safe behavior.
     fn default() -> Self {
-        Self { beginner: false, prices: BTreeMap::new(), transcript: None, deep: true, context_tokens: 0, lean_for_local: false }
+        Self { beginner: false, prices: BTreeMap::new(), transcript: None, deep: true, context_tokens: 0, lean_for_local: false, logs: None }
+    }
+}
+
+/// A log of a model turn that stopped, beside the agent CLIs' failure logs: the backend, what the
+/// server said and what to do about it. `None` when nothing could be written; the error itself is
+/// still shown.
+fn write_failure_log(dir: &std::path::Path, backend: &str, e: &ToolError) -> Option<std::path::PathBuf> {
+    let report = crate::failure_log::Report {
+        what: format!("{backend}: a model turn stopped"),
+        command: "the model request: no program ran".into(),
+        check: format!("craft-anything-cli ai test {backend:?}"),
+        diagnosis: e.remediation.clone(),
+        error: Some(format!("{} ({:?})", e.message, e.code)),
+        ..Default::default()
+    };
+    match crate::failure_log::write(dir, &report) {
+        Ok(path) => Some(path),
+        Err(write) => {
+            log::warn!("couldn't write the failure log for {backend}: {}", write.message);
+            None
+        }
     }
 }
 
@@ -779,7 +803,10 @@ impl AgentLoop {
                         continue;
                     }
                     *self.failure.lock().unwrap_or_else(PoisonError::into_inner) = Some(TurnFailure::from_api(&e));
-                    self.emit(AgentEvent::Error { message: format!("{name}: {}", e.message), remediation: e.remediation, log: None });
+                    // The agent CLIs write a log of a failed run; an API backend does the same, so the
+                    // server's own words can be read afterwards.
+                    let log = self.cfg.logs.clone().and_then(|dir| write_failure_log(&dir, &name, &e));
+                    self.emit(AgentEvent::Error { message: format!("{name}: {}", e.message), remediation: e.remediation, log });
                     return None;
                 }
             }
@@ -1662,6 +1689,52 @@ pub(crate) mod tests {
             let n = self.asks.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             self.window.filter(|_| n > 0).map(|tokens| crate::window::Window { tokens, source: "test" })
         }
+    }
+
+    /// A failing backend says where its log is, and the log holds the server's words.
+    #[test]
+    fn a_failing_backend_writes_a_log_and_says_where_it_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let logs = dir.path().join("logs");
+        let host = Arc::new(FakeHost { calls: Mutex::default(), journal: Mutex::default() });
+        let failure = Err(crate::http::status_error("Local", 503, "the server is busy"));
+        let slot = ModelSlot {
+            name: "Local".into(),
+            model: Box::new(Scripted { turns: VecDeque::from([failure]), seen: Arc::default() }),
+            local: true,
+            effort: None,
+            max_turns: 3,
+            context_tokens: 0,
+            tools: Default::default(),
+        };
+        let mut conversation = ApiConversation::start(host, vec![slot], LoopConfig { logs: Some(logs.clone()), ..Default::default() }).unwrap();
+        conversation.send("Build it");
+        let events = drain_until_done(&mut conversation, |_, _| {});
+        let log = events
+            .iter()
+            .find_map(|e| match e {
+                AgentEvent::Error { log, .. } => log.clone(),
+                _ => None,
+            })
+            .expect("the error names its log");
+        assert!(log.starts_with(&logs), "{log:?}");
+        let text = std::fs::read_to_string(&log).unwrap();
+        assert!(text.contains("Local: a model turn stopped") && text.contains("503"), "{text}");
+    }
+
+    /// The agent CLIs write a log of a failed run; a model turn that stopped on an API backend
+    /// does the same, with the server's words and the fix.
+    #[test]
+    fn a_stopped_model_turn_writes_a_failure_log() {
+        let dir = tempfile::tempdir().unwrap();
+        let e = ToolError::new(ErrorCode::ProgramFailed, "the server said 503").with_remediation("Try again later.");
+        let path = write_failure_log(dir.path(), "Local", &e).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        for part in ["Local: a model turn stopped", "the server said 503", "Try again later.", "ai test"] {
+            assert!(text.contains(part), "{part}: {text}");
+        }
+        // Nothing set: no log, and the error still reaches the person.
+        assert!(LoopConfig::default().logs.is_none());
     }
 
     #[test]

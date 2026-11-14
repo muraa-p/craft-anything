@@ -634,8 +634,9 @@ Owner: open · Status: todo
       the `gemini` backend kind uses Gemini's OpenAI-compatible endpoint and `GEMINI_API_KEY`
 - [ ] Check a Gemini build live with a real Google AI Studio key (tool calls through the
       OpenAI-compatible endpoint)
-- [ ] Failure logs for the other ways an AI stops (API backends, MCP server start-up), like the
-      ones agent CLIs write to `logs/` in the config folder
+- [x] Failure logs for API-backend stops, like the ones agent CLIs write to `logs/` in the config
+      folder: a failed model turn writes one (`agent::write_failure_log`) and the error names it
+- [ ] Failure logs for an MCP server that doesn't start
 - [x] Settings → AI can replace or forget an API backend's saved key, so a key rotated in the
       environment isn't hidden behind an older saved one (#1358); `ai key <name>` shows, replaces
       or forgets it headlessly, and never prints it
