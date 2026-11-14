@@ -326,7 +326,7 @@ mod duplicate_copy_tests {
         std::fs::write(&program, "").unwrap();
         let link = dir.path().join("bin");
         std::os::unix::fs::symlink(&real, &link).unwrap();
-        assert_eq!(distinct_programs(vec![link.join(name), program.clone()]), [program]);
+        assert_eq!(distinct_programs(vec![link.join(name), program.clone()]), [link.join(name)]);
     }
 }
 
