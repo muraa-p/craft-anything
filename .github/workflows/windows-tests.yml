@@ -34,6 +34,9 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
+        with:
+          # The build steps run PR code; nothing here needs the checkout's token afterwards.
+          persist-credentials: false
       # The runner image has the MSVC tools a Windows Rust build links against.
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2

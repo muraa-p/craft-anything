@@ -11,9 +11,10 @@ maintainers' certificates (secrets of the `release` environment, which only the 
 `ci.yml` checks every pull request and every push to `main` once the repository is public; while
 it's private its jobs are skipped (they would cost Actions minutes), so run it by hand before a
 release: `gh workflow run ci.yml --ref main`. `windows-tests.yml` also runs on every pull request
-and every push to `main`, on a Windows runner, so the tests the Linux gate can't compile
-(`cfg(windows)`: search paths, consoles, Job Objects) run there too. Dispatching `ci.yml` by hand
-does not start it, so a release check needs its own run:
+and every push to `main`, on a Windows runner: the unit tests (`--lib`) of the `platform` and `ai`
+crates, where the Windows-only search paths, consoles and Job Objects live. It is not every
+test gated by `cfg(windows)`: the engine's UI Automation tests need a desktop to drive and aren't
+run there. Dispatching `ci.yml` by hand does not start it, so a release check needs its own run:
 `gh workflow run windows-tests.yml --ref main`. The other workflows (`freebsd.yml`,
 `windows-arm64.yml`, `packaging-lint.yml`) run by hand (`gh workflow run <file>`).
 
