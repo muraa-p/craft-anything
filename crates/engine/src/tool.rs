@@ -416,7 +416,9 @@ fn coerce_numeric_string(value: &mut Value, pointer: Option<&str>, message: &str
         ExpectedNumber::F32 => text.parse::<f32>().ok().and_then(|n| serde_json::Number::from_f64(n as f64)),
         ExpectedNumber::F64 => text.parse::<f64>().ok().and_then(serde_json::Number::from_f64),
         ExpectedNumber::Number => {
-            if let Ok(n) = text.parse::<i64>() {
+            if let Ok(n) = text.parse::<u64>() {
+                Some(serde_json::Number::from(n))
+            } else if let Ok(n) = text.parse::<i64>() {
                 Some(serde_json::Number::from(n))
             } else {
                 text.parse::<f64>().ok().and_then(serde_json::Number::from_f64)
@@ -560,5 +562,15 @@ mod parameter_tests {
         assert_eq!(parsed.depth, 8);
         assert_eq!(parsed.timeout_secs, 180);
         assert_eq!(parsed.ratio, 1.5);
+    }
+
+    #[test]
+    fn a_number_written_as_text_keeps_its_exact_integer_value() {
+        #[derive(Debug, Deserialize)]
+        struct Holder {
+            n: serde_json::Number,
+        }
+        let parsed = parse_params::<Holder>(json!({"n": "18446744073709551615"})).unwrap();
+        assert_eq!(parsed.n.as_u64(), Some(18_446_744_073_709_551_615));
     }
 }
