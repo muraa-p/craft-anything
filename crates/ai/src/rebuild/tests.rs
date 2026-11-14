@@ -4087,6 +4087,28 @@ fn a_persons_own_project_is_asked_for_nothing_it_would_add_for_our_sake() {
     assert!(b.contains("--screenshot") && !b.contains("its own build and tests"), "a new app beside the files proves itself: {b}");
 }
 
+/// A website capture that kept the original's network traffic tells the builder it can serve a
+/// stand-in backend from it; one without a recording says nothing about it.
+#[test]
+fn a_website_brief_offers_a_stand_in_backend_only_when_the_capture_has_a_recording() {
+    let d = tempfile::tempdir().unwrap();
+    let ws = Workspace::create(d.path(), "Site", "Rebuild this", TargetRef::Website { url: "https://example.com".into() }).unwrap();
+    let capture = ws.root.join("capture");
+    std::fs::create_dir_all(&capture).unwrap();
+    let without = brief(&ws, "website", true, false, None, false, None);
+    assert!(!without.contains("web_standin_build"), "no recording, no stand-in: {without}");
+    std::fs::write(capture.join("web.har"), "{}").unwrap();
+    let with = brief(&ws, "website", true, false, None, false, None);
+    assert!(with.contains("web_standin_build") && with.contains("web_standin_start"), "{with}");
+    // Clean room reads nothing inside the original, so its brief never offers it.
+    let clean = brief(&ws, "website", false, false, None, false, None);
+    assert!(!clean.contains("web_standin"), "{clean}");
+    // A recording elsewhere in the project isn't one the capture kept.
+    std::fs::remove_file(capture.join("web.har")).unwrap();
+    std::fs::write(ws.root.join("other.har"), "{}").unwrap();
+    assert!(!brief(&ws, "website", true, false, None, false, None).contains("web_standin_build"));
+}
+
 #[test]
 fn a_site_stack_with_nothing_to_recreate_is_a_website() {
     let vite = "React + TypeScript (Vite)";

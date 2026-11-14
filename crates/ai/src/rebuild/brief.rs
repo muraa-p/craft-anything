@@ -87,6 +87,17 @@ fn website_from_outside(sees: bool) -> String {
     )
 }
 
+/// Told when the capture kept the original's network traffic: the builder can turn it into a
+/// stand-in backend its own front end talks to, rather than calling an API that isn't there.
+fn standin_words(ws: &Workspace) -> String {
+    let has_recording =
+        std::fs::read_dir(ws.root.join("capture")).is_ok_and(|rd| rd.flatten().any(|e| e.path().extension().is_some_and(|x| x.eq_ignore_ascii_case("har"))));
+    if !has_recording {
+        return String::new();
+    }
+    " capture/ also holds a network recording (.har) of the original: web_standin_build reads it and writes a stand-in backend, and web_standin_start serves it on a free port, so your front end gets the recorded answers instead of calling an API that isn't there; web_standin_show lists the ones running and web_standin_stop ends one.".to_string()
+}
+
 /// Clean room: what the builder has of an app or a game. Nothing inside it was read.
 fn program_from_outside(sees: bool) -> String {
     let build_from = sight(
@@ -117,10 +128,11 @@ pub(super) fn brief(kind: &dyn TargetKind, cx: &BriefCx, extra: Option<&str>) ->
             "capture/ holds what we recorded from the live site: README.md (start here: its colours, fonts, spacing, breakpoints and the layout at each width), capture.json (design tokens with colours in hex, spacing and content widths, the widths its CSS switches layout at (`breakpoints`), the layout measured at each width (`layouts`: page width, heading and text sizes, each section's padding, gap, content column and items per row), a layout outline with positions in CSS pixels, headings, links, form shapes, asset lists with its font files, and the visible text), screenshot-<width>.png for each width (desktop, tablet and phone; {shots}), noise-<width>.png where parts of the page change by themselves (white squares: carousels, videos, animations; {noise}), and page.html (the rendered HTML).\n\n\
              Match it exactly, not roughly: take colours, fonts, text sizes, padding, gaps, corner radii and content widths from capture.json as exact values (make them the project's theme tokens rather than a library's defaults), load the same font families, change the layout at the same breakpoints {matches} (sections stack, columns per row and the navigation switch where the original's do), and never let the page scroll sideways on a phone. Craft Anything measures your build the same way at every width and tells you each difference.
 
-             Deep mode: every craft-anything tool is yours, so learn how it works, not only how it looks, before you build. capture/how-it-works.md already has what its JavaScript is made of (modules, routes, the requests it makes, the libraries it uses) and ten seconds of what the start page did (requests, console, WebSocket messages). The original is open in Craft Anything's private browser (web_site_open opens another page of it); ask web_page_show (its structure, scripts, network requests and console), web_listeners_list on a control (what clicking it runs, and where that code is), web_coverage_measure while you use it (which code runs and which requests it makes) and web_walkthrough_record to click or type through a flow and record every step; web_scripts_save, js_app_map and js_sources_restore read its code as an app. Rebuild the behaviour you learn in your own code; never paste the original's code into app/.",
+             Deep mode: every craft-anything tool is yours, so learn how it works, not only how it looks, before you build. capture/how-it-works.md already has what its JavaScript is made of (modules, routes, the requests it makes, the libraries it uses) and ten seconds of what the start page did (requests, console, WebSocket messages). The original is open in Craft Anything's private browser (web_site_open opens another page of it); ask web_page_show (its structure, scripts, network requests and console), web_listeners_list on a control (what clicking it runs, and where that code is), web_coverage_measure while you use it (which code runs and which requests it makes) and web_walkthrough_record to click or type through a flow and record every step; web_scripts_save, js_app_map and js_sources_restore read its code as an app. Rebuild the behaviour you learn in your own code; never paste the original's code into app/.{standin}",
             shots = sight(sees, SHOTS_SIGHTED, SHOTS_BLIND),
             noise = sight(sees, NOISE_SIGHTED, NOISE_BLIND),
             matches = sight(sees, "so each width matches its screenshot and `layouts` entry", "so each width matches its `layouts` entry"),
+            standin = standin_words(ws),
         ),
         TargetRef::Local { .. } => format!(
             "capture/README.md holds a first static look at the program (nothing was run) and, for a game, a list of its own files: maps, textures, models, sounds and settings. Read its settings and scripts for the real numbers (speeds, health, weapons, modes, controls){style}; never change anything in that folder. Deep mode: every craft-anything tool is yours, so learn how the parts the person cares about work before you build: core_target_open and core_target_triage first, then native_functions_list, native_strings_find and native_function_pseudocode for a program's code, managed_assembly_show and managed_members_list for .NET, java_* and android_* for Java and Android apps, js_app_map, js_sources_restore and js_electron_* for an Electron app, and game_archives_list and the other game_* tools for a game's files.",

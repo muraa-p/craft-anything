@@ -1744,8 +1744,10 @@ Owner: open · Status: in progress
       released port that another listener may reuse
       — claimed: Afloat16, branch test/r3.11-standin-session-lifetime-20261103
 - [ ] Stand-in backend: writes that change later reads (recorded answers are replayed as they are)
-- [ ] Tell the builder about the stand-in backend in a website's brief, and start one from a
-      recording
+- [x] Tell the builder about the stand-in backend in a website's brief, when the capture kept a
+      recording (`capture/*.har`): what `web_standin_build`, `web_standin_start` and the rest do
+      (`brief::standin_words`); Deep mode only, since Clean room reads nothing inside the original
+- [ ] Start a stand-in backend from a recording automatically when a build begins
 - [x] Stand-in backend: retain 304 samples without a usable cached body for diagnostics, skip them
       during replay, and report `cached_body_unavailable` when the best matching group has no
       usable answer. Build results count them; cached bodies still answer as 200 (#543)
