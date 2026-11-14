@@ -605,9 +605,33 @@ impl AgentAdapter for ClaudeCode {
     }
 
     fn signed_in(&self, program: &str) -> Option<bool> {
-        let out = self.process(program).args(["auth", "status", "--json"]).timeout(Duration::from_secs(15)).stdout_cap(64 * 1024).run().ok()?;
-        let v: Value = serde_json::from_str(out.stdout_text().trim()).ok()?;
-        v.get("loggedIn").and_then(Value::as_bool)
+        let out = match self.process(program).args(["auth", "status", "--json"]).timeout(Duration::from_secs(15)).stdout_cap(64 * 1024).run() {
+            Ok(out) => out,
+            Err(e) => {
+                log::debug!("claude auth status --json didn't run: {e}");
+                return None;
+            }
+        };
+        // The status is the first JSON object printed: a certificate warning or a banner before it
+        // isn't a reason to call the person signed out (#1830).
+        let text = out.stdout_text();
+        let Some(json) = first_json_object(&text) else {
+            log::debug!("claude auth status --json: exit {:?}, {} bytes on stdout, no JSON object in it", out.code, text.len());
+            return None;
+        };
+        let v: Value = match serde_json::from_str(json) {
+            Ok(v) => v,
+            Err(e) => {
+                // The answer's wording, never its content: it names an account and a token mode.
+                log::debug!("claude auth status --json: exit {:?}, {} bytes on stdout, its JSON didn't parse: {e}", out.code, text.len());
+                return None;
+            }
+        };
+        let signed = v.get("loggedIn").and_then(Value::as_bool);
+        if signed != Some(true) {
+            log::debug!("claude auth status --json: exit {:?}, {} bytes on stdout, loggedIn: {signed:?}", out.code, text.len());
+        }
+        signed
     }
 
     /// The account its `.claude.json` names (`oauthAccount`), kept there while the sign-in itself
@@ -1060,10 +1084,61 @@ pub(super) fn remote_cli_path(host: &str) -> Option<String> {
     absolute_path_line(&out.stdout_text())
 }
 
+/// The first JSON object in `text`, to its closing brace. A CLI can print a warning (a certificate
+/// notice on Windows, a banner) before its answer, and the answer is still the object (#1830).
+fn first_json_object(text: &str) -> Option<&str> {
+    let start = text.find('{')?;
+    let rest = text.get(start..)?;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (i, c) in rest.char_indices() {
+        if in_string {
+            match c {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match c {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return rest.get(..i + c.len_utf8());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 /// The first line of `text` when it is an absolute path; a shell function, alias or banner isn't.
 fn absolute_path_line(text: &str) -> Option<String> {
     let line = text.lines().map(str::trim).find(|line| !line.is_empty())?;
     line.starts_with('/').then(|| line.to_string())
+}
+
+#[cfg(test)]
+mod first_json_object_tests {
+    use super::first_json_object;
+
+    /// #1830: a warning printed before the status doesn't hide it, and braces inside text don't
+    /// end it early.
+    #[test]
+    fn the_first_json_object_is_taken_from_noisy_output() {
+        assert_eq!(first_json_object("{\"loggedIn\":true}"), Some("{\"loggedIn\":true}"));
+        let noisy = "(node:1) Warning: self-signed certificate\n{\n  \"loggedIn\": true,\n  \"note\": \"a } inside text\"\n}\n";
+        let json = first_json_object(noisy).expect("the object after the warning");
+        let parsed: serde_json::Value = serde_json::from_str(json).expect("balanced at the right brace");
+        assert_eq!(parsed["loggedIn"], true);
+        assert_eq!(first_json_object("nothing here"), None);
+        assert_eq!(first_json_object("{\"unfinished\": "), None);
+    }
 }
 
 #[cfg(test)]
