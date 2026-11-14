@@ -4097,14 +4097,17 @@ fn a_website_brief_offers_a_stand_in_backend_only_when_the_capture_has_a_recordi
     std::fs::create_dir_all(&capture).unwrap();
     let without = brief(&ws, "website", true, false, None, false, None);
     assert!(!without.contains("web_standin_build"), "no recording, no stand-in: {without}");
-    std::fs::write(capture.join("web.har"), "{}").unwrap();
+    // The recording the study writes, written by the same function it calls.
+    let requests = [json!({"method": "GET", "url": "https://api.example.test/v1/items/42", "status": 200, "mime_type": "application/json",
+        "response_body": {"state": "captured", "bytes": 11, "text": "{\"title\":1}"}})];
+    craft_anything_engine::tools::browser_tools::write_recording(&requests, &capture.join(crate::rebuild::study::RECORDING)).unwrap();
     let with = brief(&ws, "website", true, false, None, false, None);
     assert!(with.contains("web_standin_build") && with.contains("web_standin_start"), "{with}");
     // Clean room reads nothing inside the original, so its brief never offers it.
     let clean = brief(&ws, "website", false, false, None, false, None);
     assert!(!clean.contains("web_standin"), "{clean}");
     // A recording elsewhere in the project isn't one the capture kept.
-    std::fs::remove_file(capture.join("web.har")).unwrap();
+    std::fs::remove_file(capture.join(crate::rebuild::study::RECORDING)).unwrap();
     std::fs::write(ws.root.join("other.har"), "{}").unwrap();
     assert!(!brief(&ws, "website", true, false, None, false, None).contains("web_standin_build"));
 }

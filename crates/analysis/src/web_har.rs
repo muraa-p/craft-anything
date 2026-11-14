@@ -555,6 +555,98 @@ pub fn all_strings(v: &Value, out: &mut BTreeSet<String>) {
     }
 }
 
+/// A HAR 1.2 recording of browser network entries, as the browser tools return them (method, url,
+/// status, MIME type and any response body they kept). Nothing is invented: a header reduced to its
+/// length, a body that was left out and a body that came back as bytes are all left out here too.
+/// The result is what `web_standin_build` reads, so a rebuilt front end can be given recorded
+/// answers.
+pub fn har_from_network(requests: &[Value], started: &str) -> Value {
+    let entries: Vec<Value> = requests.iter().map(|r| har_entry(r, started)).collect();
+    json!({
+        "log": {
+            "version": "1.2",
+            "creator": {"name": "Craft Anything", "version": env!("CARGO_PKG_VERSION")},
+            "entries": entries,
+        }
+    })
+}
+
+/// W3C-style headers from a name-to-value map the tools kept; a value that isn't text (a length)
+/// is dropped rather than guessed.
+fn har_headers(value: Option<&Value>) -> Vec<Value> {
+    value
+        .and_then(Value::as_object)
+        .map(|o| o.iter().filter_map(|(name, v)| v.as_str().map(|v| json!({"name": name, "value": v}))).collect())
+        .unwrap_or_default()
+}
+
+fn har_entry(r: &Value, started: &str) -> Value {
+    let text = |key: &str| r.get(key).and_then(Value::as_str).unwrap_or_default();
+    let mut request = json!({
+        "method": if text("method").is_empty() { "GET" } else { text("method") },
+        "url": text("url"),
+        "httpVersion": "HTTP/1.1",
+        "headers": har_headers(r.get("request_headers")),
+        "queryString": [],
+        "cookies": [],
+        "headersSize": -1,
+        "bodySize": -1,
+    });
+    if let Some(body) = r.get("request_body").filter(|b| b.get("state").and_then(Value::as_str) == Some("captured"))
+        && let Some(body) = body.get("text").and_then(Value::as_str)
+    {
+        request["postData"] = json!({"mimeType": text("mime_type"), "text": body});
+    }
+    let mut content = json!({"size": 0, "mimeType": text("mime_type")});
+    if let Some(body) = r.get("response_body").filter(|b| b.get("state").and_then(Value::as_str) == Some("captured"))
+        && let Some(body) = body.get("text").and_then(Value::as_str)
+    {
+        content["text"] = json!(body);
+        content["size"] = json!(r.get("response_body").and_then(|b| b.get("bytes")).and_then(Value::as_u64).unwrap_or(body.len() as u64));
+    }
+    json!({
+        "startedDateTime": started,
+        "time": 0,
+        "request": request,
+        "response": {
+            "status": r.get("status").and_then(Value::as_i64).unwrap_or(0),
+            "statusText": "",
+            "httpVersion": "HTTP/1.1",
+            "headers": har_headers(r.get("response_headers")),
+            "cookies": [],
+            "content": content,
+            "redirectURL": "",
+            "headersSize": -1,
+            "bodySize": -1,
+        },
+        "cache": {},
+        "timings": {"send": 0, "wait": 0, "receive": 0},
+    })
+}
+
+/// Now, as an ISO 8601 UTC stamp (`2026-11-14T09:30:00Z`), for a recording's `startedDateTime`.
+pub fn utc_iso_now() -> String {
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    utc_iso(secs)
+}
+
+/// A Unix time as an ISO 8601 UTC stamp, without a calendar crate: days since the epoch to a civil
+/// date, by Howard Hinnant's algorithm.
+fn utc_iso(secs: u64) -> String {
+    let days = secs / 86_400;
+    let rest = secs % 86_400;
+    let z = days as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if month <= 2 { yoe + era * 400 + 1 } else { yoe + era * 400 };
+    format!("{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z", rest / 3600, (rest % 3600) / 60, rest % 60)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -647,5 +739,42 @@ mod tests {
         let mut r = r;
         assert_eq!(r.text("/x", "q=a%20b%2Fc%22"), "q=[redacted]");
         assert!(inspect_har(b"not json", &HarOptions::default()).is_err());
+    }
+
+    /// A recording written from what a browser run kept reads back as the same requests, and a
+    /// stand-in built from it knows them.
+    #[test]
+    fn a_recording_of_kept_requests_reads_back() {
+        let requests = vec![
+            json!({"method": "GET", "url": "https://api.example.test/v1/items/42", "status": 200, "mime_type": "application/json",
+                   "response_headers": {"content-type": "application/json"},
+                   "response_body": {"state": "captured", "bytes": 11, "text": "{\"title\":1}"},
+                   "request_headers": {"accept": "application/json", "authorization": {"value_length": 12}}}),
+            json!({"method": "POST", "url": "https://api.example.test/v1/items", "status": 201, "mime_type": "application/json",
+                   "request_body": {"state": "captured", "bytes": 9, "text": "{\"a\":true}"},
+                   "response_body": {"state": "not_exposed"}}),
+        ];
+        let har = har_from_network(&requests, "2026-11-14T09:30:00Z");
+        let bytes = serde_json::to_vec(&har).unwrap();
+        let parsed = har::parse(&bytes, 10).unwrap();
+        assert_eq!(parsed.entries.len(), 2);
+        assert_eq!(parsed.entries[0].request.method, "GET");
+        assert_eq!(parsed.entries[0].response.text.as_deref(), Some("{\"title\":1}"));
+        assert_eq!(parsed.entries[1].request.post.as_ref().and_then(|p| p.text.as_deref()), Some("{\"a\":true}"));
+        assert_eq!(parsed.entries[1].response.status, 201);
+        assert_eq!(parsed.entries[1].response.text, None, "a body that wasn't kept isn't invented");
+        // A header whose value was reduced to its length stays out.
+        let headers = har["log"]["entries"][0]["request"]["headers"].as_array().unwrap();
+        assert_eq!(headers.len(), 1);
+        let standin = crate::standin::build(&parsed, &crate::standin::BuildOptions::default());
+        assert_eq!(standin.routes.len(), 2, "{:?}", standin.routes.iter().map(|r| &r.template).collect::<Vec<_>>());
+        assert_eq!(standin.hosts, vec!["api.example.test".to_string()]);
+    }
+
+    #[test]
+    fn a_unix_time_is_written_as_a_utc_stamp() {
+        assert_eq!(utc_iso(0), "1970-01-01T00:00:00Z");
+        assert_eq!(utc_iso(86_399), "1970-01-01T23:59:59Z");
+        assert_eq!(utc_iso(951_782_400), "2000-02-29T00:00:00Z");
     }
 }

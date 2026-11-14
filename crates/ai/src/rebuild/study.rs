@@ -201,6 +201,36 @@ impl Worker {
                 Err(e) => format!("{tool} didn't work: {}\n", e.message),
             });
         }
+        // A recording of the start page's traffic, with the answers it gave, so a rebuilt front end
+        // can be given a stand-in backend (#1838). The run already watches it; this keeps the bodies
+        // within their own cap, with declared secrets and credential headers redacted as
+        // everywhere else. A failure is said in the notes, not fatal to the study.
+        match self.call(
+            "web_walkthrough_record",
+            json!({
+                "actions": [{"goto": {"url": url, "wait_ms": 10_000}}],
+                "capture_network": true,
+                "keep_bodies": {"response_body": true},
+                "timeout_secs": 120,
+            }),
+        ) {
+            Ok(ToolOutput::Evidence(evidence)) => {
+                let requests = evidence.result.pointer("/network/requests").and_then(Value::as_array).cloned().unwrap_or_default();
+                let file = ws.capture_dir().join(RECORDING);
+                match craft_anything_engine::tools::browser_tools::write_recording(&requests, &file) {
+                    Ok(()) => notes.push_str(&format!(
+                        "\n## A recording of its traffic\n\ncapture/{RECORDING} holds {} request(s) and the answers the site gave while we watched: a stand-in backend built from it (web_standin_build) answers your front end the way the original did.\n",
+                        requests.len()
+                    )),
+                    Err(e) => notes.push_str(&format!("\n## A recording of its traffic\n\nWriting it didn't work: {}\n", e.message)),
+                }
+            }
+            Ok(_) => notes.push_str(&format!("\n## A recording of its traffic\n\nNothing was recorded, so there's no recording in capture/{RECORDING}.\n")),
+            Err(e) => notes.push_str(&format!(
+                "\n## A recording of its traffic\n\nRecording it didn't work ({}), so there's no recording in capture/{RECORDING}.\n",
+                e.message
+            )),
+        }
         craft_anything_engine::project::write_atomic(&ws.capture_dir().join(HOW_IT_WORKS), notes.as_bytes())
     }
 
@@ -338,6 +368,8 @@ impl Worker {
 
 /// Deep mode's notes on how a website works, in capture/.
 pub(super) const HOW_IT_WORKS: &str = "how-it-works.md";
+/// The start page's traffic as a HAR recording, so `web_standin_build` can replay its answers.
+pub(super) const RECORDING: &str = "original.har";
 
 /// The rendered HTML a Deep website capture keeps; a Clean room capture records only what a
 /// visitor sees.

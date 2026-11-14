@@ -1022,3 +1022,25 @@ fn a_missing_json_outline_is_said_in_the_evidence() {
     // Outlines weren't asked for at all: nothing to report.
     assert!(super::json_outline_limitation(&json!({"network": {"request_count": 3}})).is_none());
 }
+
+/// #1838: a recording written from the requests and answers a browser run kept is one a stand-in
+/// backend can be built from, with the ids in its paths read as templates.
+#[test]
+fn a_recording_written_from_a_run_builds_a_stand_in() {
+    let dir = tempfile::tempdir().unwrap();
+    let har = dir.path().join("original.har");
+    let requests = [
+        json!({"method": "GET", "url": "https://api.example.test/v1/items/42", "status": 200, "mime_type": "application/json",
+               "response_body": {"state": "captured", "bytes": 11, "text": "{\"title\":1}"}}),
+        json!({"method": "GET", "url": "https://api.example.test/v1/items/77", "status": 200, "mime_type": "application/json",
+               "response_body": {"state": "captured", "bytes": 11, "text": "{\"title\":2}"}}),
+    ];
+    super::write_recording(&requests, &har).unwrap();
+    let written = std::fs::read_to_string(&har).unwrap();
+    assert!(written.contains("\"version\": \"1.2\"") && written.contains("/v1/items/42"), "{written}");
+    let e = Engine::new(crate::testing::session());
+    let out = call(&e, "web_standin_build", json!({"path": har, "output_dir": dir.path().join("standin")})).unwrap();
+    let routes = out["result"]["routes"].as_array().unwrap();
+    assert!(routes.iter().any(|r| r["template"] == "/v1/items/{id}"), "{}", out["result"]);
+    assert_eq!(out["result"]["routes_total"], 1, "{}", out["result"]);
+}
