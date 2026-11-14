@@ -1165,8 +1165,11 @@ an old feature branch was checked out, so a dozen pending lines that `main` had 
 looked open: the SSH builder's environment, the 304 stand-in, prompt pictures, pins' size, the
 OpenCode sweep. Time went into checking each against the code, and a branch was even started for
 work `main` already had. Read the roadmap (and any file you plan to change) from `origin/main`,
-with `git show origin/main:docs/ROADMAP.md` or after checking out the base branch; a pending line
-can also carry "— in PR #245", so check that PR's state, since a closed PR leaves the work open.
+with `git fetch origin` first, then `git show origin/main:docs/ROADMAP.md` or after checking out
+the base branch. A pending line can also carry "— in PR #245", so check that PR's state: a closed
+PR or a stale line is not proof either way, since work can land in a different PR or commit. Check
+the code on `main` before believing a pending line is still open, or a closed PR still leaves work
+open.
 
 **Safe recovery paths erased distinct source identities.** Source-map names such as `src//main.js`
 and `src/main.js` became the same safe path, so exclusive creation kept the first file and dropped
