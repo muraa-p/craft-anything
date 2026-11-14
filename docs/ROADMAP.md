@@ -1747,6 +1747,10 @@ Owner: open · Status: in progress
 - [x] Tell the builder about the stand-in backend in a website's brief, when the capture kept a
       recording (`capture/*.har`): what `web_standin_build`, `web_standin_start` and the rest do
       (`brief::standin_words`); Deep mode only, since Clean room reads nothing inside the original
+- [x] A Deep website study records the start page's traffic and the answers it gave into
+      `capture/original.har`, so the brief's stand-in offer has a recording to point at
+      (`analysis::web_har::har_from_network`, `browser_tools::write_recording`)
+- [ ] Live-check a Deep website study's recording on a real site, and the stand-in built from it
 - [ ] Start a stand-in backend from a recording automatically when a build begins
 - [x] Stand-in backend: retain 304 samples without a usable cached body for diagnostics, skip them
       during replay, and report `cached_body_unavailable` when the best matching group has no
