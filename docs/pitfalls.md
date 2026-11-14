@@ -1160,6 +1160,14 @@ partial inventory for inspection, expose the stop as typed data, and make extrac
 writing any member. Missing end markers need their own compatibility control; `complete: false`
 alone does not identify a refused metadata record.
 
+**A roadmap read from the checked-out branch, not from `main`.** `docs/ROADMAP.md` was read while
+an old feature branch was checked out, so a dozen pending lines that `main` had already ticked
+looked open: the SSH builder's environment, the 304 stand-in, prompt pictures, pins' size, the
+OpenCode sweep. Time went into checking each against the code, and a branch was even started for
+work `main` already had. Read the roadmap (and any file you plan to change) from `origin/main`,
+with `git show origin/main:docs/ROADMAP.md` or after checking out the base branch; a pending line
+can also carry "— in PR #245", so check that PR's state, since a closed PR leaves the work open.
+
 **Safe recovery paths erased distinct source identities.** Source-map names such as `src//main.js`
 and `src/main.js` became the same safe path, so exclusive creation kept the first file and dropped
 the second. A file can also occupy a later source's parent directory, or arrive after its own
