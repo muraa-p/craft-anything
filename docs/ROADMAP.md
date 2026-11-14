@@ -1347,7 +1347,8 @@ Gaps found while using the app for real projects.
       — claimed: Afloat16, branch bugfix/r2.9-atomic-temp-creation-20261103b
 - [x] A prompt brought back with Up keeps its pictures (their paths are absolute, so they don't
       come back after the project is moved)
-- [ ] Change a project's builder from its page (a tool, so the CLI and MCP can too) — in PR #245
+- [x] Change a project's builder from its page (a tool, so the CLI and MCP can too):
+      `project_builder_set`, with `default` giving it back to the app's choice — in PR #245
 - [x] `chat --backend <a name that is turned off>` and `compare` refuse it before model or
       agent setup: `AiHub::start` checks `enabled` and says how to turn it on or choose another
       — PR #1008; claimed: Codex, branch bugfix/r2.9-disabled-chat-backend

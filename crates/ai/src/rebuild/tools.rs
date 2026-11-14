@@ -37,6 +37,17 @@ pub fn specs() -> Vec<ToolSpec> {
             run: rebuild_status,
         },
         ToolSpec {
+            id: "project_builder_set",
+            title: "Choose what builds a project",
+            summary: "Choose the coding agent that builds a project's later changes, by an enabled AI backend's name; with `default`, the app's own choice builds it again. With no name, says which one is chosen and which one builds now. Takes effect from the next build, also from the CLI and over MCP.",
+            beginner: "Chooses which AI makes the changes in this project.",
+            toolset: Toolset::Projects,
+            effects: Effects::WRITES_FILESYSTEM,
+            requires: Requires::Nothing,
+            input_schema: schema_of::<BuilderParams>,
+            run: project_builder_set,
+        },
+        ToolSpec {
             id: "rebuild_activity_show",
             title: "Show a build's activity",
             summary: "What a project's builds did, line by line, newest last: each stage, every command and file the builder touched and how it ended, what it said, and what programs printed outside the conversation. Secrets are hidden. Works while a build runs and after. `limit` lines (200 by default, at most 2000), `offset` lines back from the newest.",
@@ -187,6 +198,17 @@ fn d_wait_minutes() -> u64 {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct BuilderParams {
+    /// The project's folder.
+    pub project: PathBuf,
+    /// An enabled AI backend's name; `default` gives the project back to the app's choice. None
+    /// just reads what applies.
+    #[serde(default)]
+    pub builder: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ProjectParams {
     /// The project's folder.
     pub project: PathBuf,
@@ -307,6 +329,28 @@ fn record_question_usage(ws: &Workspace, answered: &super::question::Answered) {
     if let Err(e) = ProjectUsage::update(&ws.root, |u| u.add_turn(0, 0, Some(cost), answered.cost_is_estimate)) {
         log::warn!("Couldn't record the question's cost in {}: {}", ws.root.display(), e.message);
     }
+}
+
+/// What builds a project's later changes. A name is checked first, so a refused choice leaves
+/// the project's own choice as it was.
+fn project_builder_set(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, ToolError> {
+    let p: BuilderParams = parse_params(params)?;
+    let cfg = crate::AiConfig::from_settings(&ctx.session.settings);
+    let mut ws = open(&p.project)?;
+    if let Some(name) = p.builder.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+        if name.eq_ignore_ascii_case("default") {
+            ws.set_person(|m| m.builder = None)?;
+        } else {
+            let entry = builder_backend(&cfg, Some(name))?;
+            ws.set_person(|m| m.builder = Some(entry.config.name.clone()))?;
+        }
+    }
+    let builds = builder_backend(&cfg, project_builder(&cfg, &ws))?.config.name;
+    Ok(ToolOutput::Value(json!({
+        "project": ws.root,
+        "builder": ws.manifest.builder,
+        "builds": builds,
+    })))
 }
 
 fn rebuild_questions_list(_ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, ToolError> {
@@ -700,6 +744,43 @@ mod tests {
             assert!(err.message.contains(expected), "{backend}: {err:?}");
             assert_eq!(std::fs::read_dir(d.path()).unwrap().count(), 0, "{backend}: a refused start must not make a project");
         }
+    }
+
+    /// A project's builder is chosen by name, a name it can't use is refused before anything is
+    /// saved, and `default` gives it back to the app's own choice.
+    #[test]
+    fn a_project_keeps_the_builder_it_is_given() {
+        let d = tempfile::tempdir().unwrap();
+        let mut s = craft_anything_engine::testing::session();
+        s.settings.ai = toml::from_str(
+            "[[backends]]\nname = \"Claude\"\nkind = \"anthropic\"\nmodel = \"claude-test\"\n\
+             [[backends]]\nname = \"Off\"\nkind = \"anthropic\"\nmodel = \"claude-test\"\nenabled = false\n",
+        )
+        .unwrap();
+        let e = Engine::shared(s, specs());
+        let ws = Workspace::create(d.path(), "Notes", "A notes app", TargetRef::None).unwrap();
+        let call = |p: Value| e.call("project_builder_set", p, CallOptions::new(Caller::Cli)).map(|o| o.to_json()["result"].clone());
+
+        // Nothing chosen yet: the app's own choice builds.
+        let read = call(json!({"project": ws.root})).unwrap();
+        assert_eq!((read["builder"].as_str(), read["builds"].as_str()), (None, Some("Claude")));
+
+        // A name that can't build is refused, and the project keeps what it had.
+        for (name, expected) in [("Off", "turned off"), ("No Such AI", "No AI backend named")] {
+            let err = call(json!({"project": ws.root, "builder": name})).unwrap_err();
+            assert!(err.message.contains(expected), "{name}: {err:?}");
+            assert_eq!(Workspace::open(&ws.root).unwrap().manifest.builder, None, "{name}: nothing saved");
+        }
+
+        // A builder it can use is kept in the project.
+        let set = call(json!({"project": ws.root, "builder": "Claude"})).unwrap();
+        assert_eq!((set["builder"].as_str(), set["builds"].as_str()), (Some("Claude"), Some("Claude")));
+        assert_eq!(Workspace::open(&ws.root).unwrap().manifest.builder.as_deref(), Some("Claude"));
+
+        // `default` gives it back to the app's choice.
+        let back = call(json!({"project": ws.root, "builder": "default"})).unwrap();
+        assert_eq!((back["builder"].as_str(), back["builds"].as_str()), (None, Some("Claude")));
+        assert_eq!(Workspace::open(&ws.root).unwrap().manifest.builder, None);
     }
 
     /// #1102: a tool holds the session while it runs, so starting a build on an API backend must not
