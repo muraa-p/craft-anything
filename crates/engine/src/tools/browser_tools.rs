@@ -688,7 +688,9 @@ fn json_outline_limitation(result: &Value) -> Option<Limitation> {
 pub fn write_recording(requests: &[Value], path: &std::path::Path) -> Result<(), ToolError> {
     let har = craft_anything_analysis::web_har::har_from_network(requests, &craft_anything_analysis::web_har::utc_iso_now());
     let bytes = serde_json::to_vec_pretty(&har).map_err(|e| ToolError::internal(format!("the recording couldn't be written: {e}")))?;
-    crate::project::write_atomic(path, &bytes)
+    // The bodies are a person's traffic, not declared secrets: private permissions keep other
+    // users on the machine out of the file, as the stand-in built from it already does.
+    craft_anything_platform::write_atomic_private(path, &bytes)
 }
 
 fn collect_websockets(events: &[cdp::CdpEvent], secrets: &mut Secrets) -> Value {

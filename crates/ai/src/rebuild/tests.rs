@@ -4112,6 +4112,17 @@ fn a_website_brief_offers_a_stand_in_backend_only_when_the_capture_has_a_recordi
     assert!(!brief(&ws, "website", true, false, None, false, None).contains("web_standin_build"));
 }
 
+/// #1838: the recording step the study runs reads as the tool's own params, `kind` and all, so it
+/// reaches the walkthrough rather than the error notes.
+#[test]
+fn the_studys_recording_step_reads_as_the_tools_params() {
+    let params = crate::rebuild::study::recording_params("https://example.test/start");
+    let parsed: craft_anything_engine::tools::browser_tools::WalkthroughParams =
+        serde_json::from_value(params.clone()).unwrap_or_else(|e| panic!("the study's own params are refused: {e}: {params}"));
+    assert_eq!(parsed.actions.len(), 1);
+    assert!(parsed.keep_bodies.response_body && parsed.keep_bodies.request_body, "a stand-in needs both bodies");
+}
+
 #[test]
 fn a_site_stack_with_nothing_to_recreate_is_a_website() {
     let vite = "React + TypeScript (Vite)";
