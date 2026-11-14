@@ -14,7 +14,9 @@ release: `gh workflow run ci.yml --ref main`. `windows-tests.yml` also runs on e
 and every push to `main`, on a Windows runner: the unit tests (`--lib`) of the `platform` and `ai`
 crates, where the Windows-only search paths, consoles and Job Objects live. It is not every
 test gated by `cfg(windows)`: the engine's UI Automation tests need a desktop to drive and aren't
-run there. Dispatching `ci.yml` by hand does not start it, so a release check needs its own run:
+run there. It builds no binaries either: the AI tests that check a builder's tool server hand it a
+stand-in helper (a fake path or a registered adapter), so the step covers the library's logic, not
+the installed `craft-anything-cli` starting for real. Dispatching `ci.yml` by hand does not start it, so a release check needs its own run:
 `gh workflow run windows-tests.yml --ref main`. The other workflows (`freebsd.yml`,
 `windows-arm64.yml`, `packaging-lint.yml`) run by hand (`gh workflow run <file>`).
 
