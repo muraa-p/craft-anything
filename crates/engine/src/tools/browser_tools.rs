@@ -580,11 +580,13 @@ pub(crate) fn collect_network(
             .cloned()
             .collect();
         let mut outlined = 0u64;
+        let mut tried = 0u64;
         let mut ids = json_ids.iter().take(JSON_OUTLINE_CAP);
         for id in ids.by_ref() {
             if dl.expired() {
                 break;
             }
+            tried += 1;
             if let Ok(body) = client.call("Network.getResponseBody", json!({"requestId": id}), None, dl)
                 && let Some(text) = body.get("body").and_then(Value::as_str)
             {
@@ -602,9 +604,19 @@ pub(crate) fn collect_network(
                 }
             }
         }
-        // Every JSON response past the cap, or after the window's deadline, went unread: say how
-        // many, so a missing outline isn't read as a response with no JSON body.
-        json = Some(json!({"json_responses": json_ids.len(), "json_outlines": outlined}));
+        // Why each JSON response got no outline, so a missing outline isn't read as a response with
+        // no JSON body: it was past the cap, the deadline ended the reading, or its body couldn't
+        // be read as JSON (a redirect, a body Chrome no longer holds, text that isn't JSON).
+        let total = json_ids.len() as u64;
+        let past_cap = total.saturating_sub(JSON_OUTLINE_CAP as u64);
+        let after_deadline = total.saturating_sub(past_cap).saturating_sub(tried);
+        json = Some(json!({
+            "json_responses": total,
+            "json_outlines": outlined,
+            "json_outlines_past_cap": past_cap,
+            "json_outlines_after_deadline": after_deadline,
+            "json_outlines_unreadable": tried.saturating_sub(outlined),
+        }));
     }
     if content.response_body {
         let ids: Vec<String> = order.iter().take(200).cloned().collect();
@@ -642,15 +654,33 @@ pub(crate) fn collect_network(
 fn json_outline_limitation(result: &Value) -> Option<Limitation> {
     let counts = result.pointer("/network/json_outlines")?;
     let total = counts.get("json_responses")?.as_u64()?;
-    let outlined = counts.get("json_outlines").and_then(Value::as_u64).unwrap_or(0);
-    (total > outlined).then(|| {
-        Limitation::new(
-            "json_outlines_partial",
-            format!(
-                "{outlined} of {total} JSON responses got a body outline; the rest were past the first {JSON_OUTLINE_CAP} JSON responses or after the window's deadline, so a missing outline doesn't mean the response had no JSON body."
-            ),
-        )
-    })
+    let count = |key: &str| counts.get(key).and_then(Value::as_u64).unwrap_or(0);
+    let outlined = count("json_outlines");
+    if total <= outlined {
+        return None;
+    }
+    let mut why = Vec::new();
+    for (key, words) in [
+        ("json_outlines_past_cap", format!("past the first {JSON_OUTLINE_CAP} JSON responses")),
+        ("json_outlines_after_deadline", "after the window's deadline".to_string()),
+        ("json_outlines_unreadable", "whose body couldn't be read as JSON".to_string()),
+    ] {
+        let n = count(key);
+        if n > 0 {
+            why.push(format!("{n} {words}"));
+        }
+    }
+    let rest = match why.split_last() {
+        None => String::new(),
+        Some((last, [])) => last.clone(),
+        Some((last, head)) => format!("{} and {last}", head.join(", ")),
+    };
+    Some(Limitation::new(
+        "json_outlines_partial",
+        format!(
+            "{outlined} of {total} JSON responses got a body outline; the rest were {rest}, so a missing outline doesn't mean the response had no JSON body."
+        ),
+    ))
 }
 
 fn collect_websockets(events: &[cdp::CdpEvent], secrets: &mut Secrets) -> Value {
