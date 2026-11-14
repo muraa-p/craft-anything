@@ -315,6 +315,8 @@ const SCRIPT_RECORD_CAP: usize = 50_000;
 const SCRIPT_META_BUDGET: usize = 8 << 20;
 const SOURCE_TEXT_BUDGET: usize = 32 << 20;
 const NETWORK_RECORD_CAP: usize = 20_000;
+/// JSON responses read for an outline; counts JSON responses, not all requests (#1811).
+const JSON_OUTLINE_CAP: usize = 200;
 
 /// Enable the needed domains, observe for `watch_ms`, and build a data-minimised capture.
 pub(crate) fn capture_page(
@@ -567,16 +569,21 @@ pub(crate) fn collect_network(
             _ => {}
         }
     }
-    // Optional JSON body outlines for JSON responses.
+    // Optional JSON body outlines for JSON responses. The cap counts JSON responses, not every
+    // request: a page that loads its data after 230 scripts, styles and telemetry calls still got
+    // outlines for what mattered (#1811).
+    let mut json = None;
     if want_body_outlines {
-        let ids: Vec<String> = order.iter().take(200).cloned().collect();
-        for id in ids {
+        let json_ids: Vec<String> = order
+            .iter()
+            .filter(|id| reqs.get(*id).and_then(|e| e.get("mime_type")).and_then(Value::as_str).is_some_and(|m| m.contains("json")))
+            .cloned()
+            .collect();
+        let mut outlined = 0u64;
+        let mut ids = json_ids.iter().take(JSON_OUTLINE_CAP);
+        for id in ids.by_ref() {
             if dl.expired() {
                 break;
-            }
-            let is_json = reqs.get(&id).and_then(|e| e.get("mime_type")).and_then(Value::as_str).is_some_and(|m| m.contains("json"));
-            if !is_json {
-                continue;
             }
             if let Ok(body) = client.call("Network.getResponseBody", json!({"requestId": id}), None, dl)
                 && let Some(text) = body.get("body").and_then(Value::as_str)
@@ -588,12 +595,16 @@ pub(crate) fn collect_network(
                 };
                 if let Some(t) = decoded
                     && let Ok(v) = serde_json::from_str::<Value>(&t)
-                    && let Some(entry) = reqs.get_mut(&id)
+                    && let Some(entry) = reqs.get_mut(id)
                 {
                     entry["json_body_outline"] = web_common::json_outline(&v);
+                    outlined += 1;
                 }
             }
         }
+        // Every JSON response past the cap, or after the window's deadline, went unread: say how
+        // many, so a missing outline isn't read as a response with no JSON body.
+        json = Some(json!({"json_responses": json_ids.len(), "json_outlines": outlined}));
     }
     if content.response_body {
         let ids: Vec<String> = order.iter().take(200).cloned().collect();
@@ -619,7 +630,27 @@ pub(crate) fn collect_network(
         }
     }
     let items: Vec<Value> = order.iter().filter_map(|id| reqs.get(id).cloned()).collect();
-    json!({"request_count": items.len(), "requests": items})
+    let mut out = json!({"request_count": items.len(), "requests": items});
+    if let Some(json) = json {
+        out["json_outlines"] = json;
+    }
+    out
+}
+
+/// How many JSON responses in the window got a body outline. When some didn't, a limitation says
+/// so, so an absent outline is never read as "this response had no JSON body" (#1811).
+fn json_outline_limitation(result: &Value) -> Option<Limitation> {
+    let counts = result.pointer("/network/json_outlines")?;
+    let total = counts.get("json_responses")?.as_u64()?;
+    let outlined = counts.get("json_outlines").and_then(Value::as_u64).unwrap_or(0);
+    (total > outlined).then(|| {
+        Limitation::new(
+            "json_outlines_partial",
+            format!(
+                "{outlined} of {total} JSON responses got a body outline; the rest were past the first {JSON_OUTLINE_CAP} JSON responses or after the window's deadline, so a missing outline doesn't mean the response had no JSON body."
+            ),
+        )
+    })
 }
 
 fn collect_websockets(events: &[cdp::CdpEvent], secrets: &mut Secrets) -> Value {
@@ -835,6 +866,7 @@ fn passive_evidence(
     declared_secrets: usize,
     redactions: u64,
 ) -> Result<craft_anything_evidence::Evidence, ToolError> {
+    let outlines_partial = json_outline_limitation(&result);
     let mut b = EvidenceBuilder::new(op, Subject { kind: "website".into(), sha256: None, name: Some(origin.to_string()) }, browser_env(clean_room, browser))
         .params(json!({"endpoint": browser.endpoint.origin, "sensitive_value_declarations": declared_secrets}))
         .result(result)
@@ -851,6 +883,9 @@ fn passive_evidence(
         ))
         .coverage(Coverage { status: CoverageStatus::Partial, examined: None, total: None, next_offset: None })
         .location(Location::new("url", origin.to_string()));
+    if let Some(partial) = outlines_partial {
+        b = b.limitation(partial);
+    }
     if dropped > 0 {
         b = b.limitation(Limitation::new("events_dropped", format!("{dropped} event(s) were dropped against the capture budget")));
     }

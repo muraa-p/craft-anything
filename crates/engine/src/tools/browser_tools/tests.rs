@@ -995,3 +995,17 @@ fn same_origin_loopback_source_maps_are_fetched() {
     assert!(other_seen.lock().unwrap().is_empty());
     assert_eq!(seen.lock().unwrap().len(), 2);
 }
+
+/// #1811: a JSON response with no outline is said to be unread, not taken as a response with no
+/// body; when every JSON response got one there is nothing to say.
+#[test]
+fn a_missing_json_outline_is_said_in_the_evidence() {
+    let partial = json!({"network": {"json_outlines": {"json_responses": 60, "json_outlines": 39}}});
+    let limitation = super::json_outline_limitation(&partial).expect("39 of 60 went unread");
+    assert_eq!(limitation.code, "json_outlines_partial");
+    assert!(limitation.message.contains("39 of 60") && limitation.message.contains("200"), "{}", limitation.message);
+    let all = json!({"network": {"json_outlines": {"json_responses": 39, "json_outlines": 39}}});
+    assert!(super::json_outline_limitation(&all).is_none());
+    // Outlines weren't asked for at all: nothing to report.
+    assert!(super::json_outline_limitation(&json!({"network": {"request_count": 3}})).is_none());
+}
