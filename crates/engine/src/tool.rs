@@ -324,22 +324,21 @@ pub fn parse_params<T: DeserializeOwned>(v: Value) -> Result<T, ToolError> {
 /// as an integer, a number or a boolean is its text rewritten: a string parameter keeps its text,
 /// even when that text is `"200"`. Nested objects follow `properties`, arrays follow `items`, and
 /// nothing the schema doesn't describe is touched (#1825). A nested type is usually a `$ref` into
-/// the schema's own `$defs`, which is read through.
+/// the schema's own `$defs` or `definitions`, which is read through by the reference's own path.
 pub fn params_as_schema(schema: &Value, params: Value) -> Value {
-    let defs = schema.get("$defs").or_else(|| schema.get("definitions"));
-    typed_as_schema(schema, defs, &params, MAX_PARAM_DEPTH)
+    typed_as_schema(schema, schema, &params, MAX_PARAM_DEPTH)
 }
 
 /// Params are trees the schema bounds, but a self-referencing schema would not end: past this
 /// depth a value is taken as written.
 const MAX_PARAM_DEPTH: usize = 64;
 
-fn typed_as_schema(schema: &Value, defs: Option<&Value>, params: &Value, depth: usize) -> Value {
+fn typed_as_schema(schema: &Value, root: &Value, params: &Value, depth: usize) -> Value {
     if depth == 0 {
         return params.clone();
     }
-    if let Some(next) = resolve_ref(schema, defs) {
-        return typed_as_schema(next, defs, params, depth - 1);
+    if let Some(next) = resolve_ref(schema, root) {
+        return typed_as_schema(next, root, params, depth - 1);
     }
     match params {
         Value::String(s) => written_as_schema(schema, s, params),
@@ -348,25 +347,29 @@ fn typed_as_schema(schema: &Value, defs: Option<&Value>, params: &Value, depth: 
             Value::Object(
                 map.iter()
                     .map(|(key, value)| match properties.and_then(|p| p.get(key)) {
-                        Some(next) => (key.clone(), typed_as_schema(next, defs, value, depth - 1)),
+                        Some(next) => (key.clone(), typed_as_schema(next, root, value, depth - 1)),
                         None => (key.clone(), value.clone()),
                     })
                     .collect(),
             )
         }
         Value::Array(items) => match schema.get("items") {
-            Some(next) => Value::Array(items.iter().map(|item| typed_as_schema(next, defs, item, depth - 1)).collect()),
+            Some(next) => Value::Array(items.iter().map(|item| typed_as_schema(next, root, item, depth - 1)).collect()),
             None => params.clone(),
         },
         _ => params.clone(),
     }
 }
 
-/// A `$ref` to one of the schema's own definitions (`#/$defs/Name`, `#/definitions/Name`).
-fn resolve_ref<'a>(schema: &'a Value, defs: Option<&'a Value>) -> Option<&'a Value> {
+/// A `$ref` into the schema itself (`#/$defs/Name`, `#/definitions/Name`), read at the path the
+/// reference names, so a schema that keeps both dictionaries has each reference obey its own.
+fn resolve_ref<'a>(schema: &'a Value, root: &'a Value) -> Option<&'a Value> {
     let reference = schema.get("$ref")?.as_str()?;
-    let name = reference.strip_prefix("#/$defs/").or_else(|| reference.strip_prefix("#/definitions/"))?;
-    defs?.get(name)
+    let pointer = reference.strip_prefix('#')?;
+    if !pointer.starts_with('/') {
+        return None;
+    }
+    root.pointer(pointer)
 }
 
 /// A string the caller wrote. Where the schema allows text, text stays text: a number field that
@@ -483,6 +486,17 @@ mod parameter_tests {
         });
         let typed = params_as_schema(&nested, json!({"range": {"offset": "592", "length": "1024"}}));
         assert_eq!(typed, json!({"range": {"offset": 592, "length": 1024}}));
+
+        // A schema that keeps both dictionaries is read by each reference's own path: the one into
+        // `definitions` wants text, the one into `$defs` a number.
+        let both = json!({
+            "type": "object",
+            "properties": {"a": {"$ref": "#/definitions/Value"}, "b": {"$ref": "#/$defs/Value"}},
+            "definitions": {"Value": {"type": "string"}},
+            "$defs": {"Value": {"type": "integer"}}
+        });
+        let typed = params_as_schema(&both, json!({"a": "200", "b": "200"}));
+        assert_eq!(typed, json!({"a": "200", "b": 200}));
 
         // A list of types is read as a set: the order never decides, and a value the schema also
         // allows as text keeps its text.
