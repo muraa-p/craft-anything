@@ -69,8 +69,9 @@ pub fn detect(b: &Binary, data: &[u8]) -> Vec<Hint> {
             for s in &b.sections {
                 if (s.name == ".go.buildinfo" || s.name == "__go_buildinfo")
                     && let Some(off) = s.file_offset
+                    && let Ok(off) = usize::try_from(off)
                 {
-                    scan_start = scan_start.max(off as usize);
+                    scan_start = scan_start.max(off);
                 }
             }
             if let Some(at) = find_bytes(data, b"\xff Go buildinf:", SCAN_LIMIT) {
@@ -80,7 +81,7 @@ pub fn detect(b: &Binary, data: &[u8]) -> Vec<Hint> {
             find_bytes(haystack, b"go1.", SCAN_LIMIT).and_then(|rel| {
                 let at = scan_start + rel;
                 let v: String = data
-                    .get(at..data.len())
+                    .get(at..(at + 32).min(data.len()))
                     .unwrap_or(&[])
                     .iter()
                     .take_while(|c| c.is_ascii_alphanumeric() || **c == b'.')
@@ -266,6 +267,18 @@ mod tests {
         let hints = detect(&b, &go);
         let g = hints.iter().find(|h| h.id == "go").unwrap();
         assert_eq!(g.label, "Go (go1.22.3)", "{g:?}");
+    }
+
+    #[test]
+    fn go_version_comes_from_build_info() {
+        // The version the build-info reader extracts wins, and it keeps strong confidence
+        // (#1397, #1858).
+        let elf = craft_anything_testkit::formats::go_elf();
+        let b = crate::parse_binary(&elf).unwrap();
+        let hints = detect(&b, &elf);
+        let g = hints.iter().find(|h| h.id == "go").unwrap();
+        assert_eq!(g.label, "Go (go1.21.5)", "{g:?}");
+        assert_eq!(g.strength, "strong", "{g:?}");
     }
 
     #[test]
