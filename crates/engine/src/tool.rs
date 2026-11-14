@@ -319,6 +319,61 @@ pub fn parse_params<T: DeserializeOwned>(v: Value) -> Result<T, ToolError> {
     })
 }
 
+/// Tool params with a number or a boolean the caller wrote as text (`"limit": "200"`, a model's
+/// usual slip) read as what the tool's schema says they are. Only where the schema types a value
+/// as an integer, a number or a boolean is its text rewritten: a string parameter keeps its text,
+/// even when that text is `"200"`. Nested objects follow `properties`, arrays follow `items`, and
+/// nothing the schema doesn't describe is touched (#1825).
+pub fn params_as_schema(schema: &Value, params: Value) -> Value {
+    typed_as_schema(schema, &params, MAX_PARAM_DEPTH)
+}
+
+/// Params are trees the schema bounds, but a self-referencing schema would not end: past this
+/// depth a value is taken as written.
+const MAX_PARAM_DEPTH: usize = 64;
+
+fn typed_as_schema(schema: &Value, params: &Value, depth: usize) -> Value {
+    if depth == 0 {
+        return params.clone();
+    }
+    match (schema_kind(schema), params) {
+        (Some("integer" | "number"), Value::String(s)) if s.trim() == s && !s.is_empty() => match serde_json::from_str::<Value>(s) {
+            Ok(Value::Number(n)) => Value::Number(n),
+            _ => params.clone(),
+        },
+        (Some("boolean"), Value::String(s)) => match s.as_str() {
+            "true" => Value::Bool(true),
+            "false" => Value::Bool(false),
+            _ => params.clone(),
+        },
+        (_, Value::Object(map)) => {
+            let properties = schema.get("properties");
+            Value::Object(
+                map.iter()
+                    .map(|(key, value)| match properties.and_then(|p| p.get(key)) {
+                        Some(next) => (key.clone(), typed_as_schema(next, value, depth - 1)),
+                        None => (key.clone(), value.clone()),
+                    })
+                    .collect(),
+            )
+        }
+        (_, Value::Array(items)) => match schema.get("items") {
+            Some(next) => Value::Array(items.iter().map(|item| typed_as_schema(next, item, depth - 1)).collect()),
+            None => params.clone(),
+        },
+        _ => params.clone(),
+    }
+}
+
+/// A schema's `type`, whether written as one word or as one of a list (`["integer", "null"]`).
+fn schema_kind(schema: &Value) -> Option<&str> {
+    match schema.get("type")? {
+        Value::String(kind) => Some(kind.as_str()),
+        Value::Array(kinds) => kinds.iter().find_map(Value::as_str),
+        _ => None,
+    }
+}
+
 /// A JSON Pointer to the rejected value, without guessing when Serde cannot locate it.
 fn parameter_pointer(path: &serde_path_to_error::Path) -> Option<String> {
     const LIMIT: usize = 1024;
@@ -366,6 +421,29 @@ mod parameter_tests {
         }
         let valid = parse_params::<Question>(json!({"question": "Where?", "probes": ["inspect"]})).unwrap();
         assert_eq!(valid, Question { question: "Where?".into(), probes: vec!["inspect".into()] });
+    }
+
+    /// #1825: params follow the schema: a number or a boolean written as text is read as one,
+    /// a string stays text even when it reads as a number, and undescribed values are untouched.
+    #[test]
+    fn a_number_the_schema_types_is_read_as_one_and_text_stays_text() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "offset": {"type": "integer"},
+                "ratio": {"type": ["number", "null"]},
+                "deep": {"type": "boolean"},
+                "note": {"type": "string"},
+                "pages": {"type": "array", "items": {"type": "integer"}}
+            }
+        });
+        let typed = params_as_schema(&schema, json!({"offset": "592", "ratio": "1.5", "deep": "true", "note": "200", "pages": ["1", 2], "other": "3"}));
+        assert_eq!(typed, json!({"offset": 592, "ratio": 1.5, "deep": true, "note": "200", "pages": [1, 2], "other": "3"}));
+        // Text that isn't the value the schema wants stays as written, so the error still says
+        // what is wrong where.
+        let typed = params_as_schema(&schema, json!({"deep": "yes", "note": "1"}));
+        assert_eq!(typed, json!({"deep": "yes", "note": "1"}));
+        assert!(parse_params::<Question>(params_as_schema(&json!({"type": "object"}), json!({"question": "Where?"}))).is_ok());
     }
 
     #[test]

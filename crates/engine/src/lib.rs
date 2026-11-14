@@ -281,6 +281,10 @@ impl Engine {
                     .with_details(serde_json::json!({"tool": spec.id})));
             }
         }
+        // A model sometimes writes a number or a boolean as text (`"limit": "200"`): where the
+        // tool's schema says the value is one, it's read as one rather than refused. A builder
+        // used to retry the refused call until the run was out of room (#1825).
+        let params = tool::params_as_schema(&(spec.input_schema)(), params);
         let run = spec.run;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut ctx = Ctx { tool: spec.id, session: &mut session, cancel: opts.cancel.clone(), progress: opts.progress, caller: opts.caller };

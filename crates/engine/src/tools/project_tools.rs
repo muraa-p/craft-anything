@@ -739,6 +739,8 @@ mod tests {
         assert_eq!(call(json!({"project": ws.root, "budget_usd": 12.5})).unwrap()["budget_usd"], 12.5);
         assert_eq!(Workspace::open(&ws.root).unwrap().manifest.asset_budget_usd, 12.5);
         assert!(call(json!({"project": ws.root, "budget_usd": -1})).is_err());
+        // #1825: a model wrote the number as text; it is read as the number it is, not refused.
+        assert_eq!(call(json!({"project": ws.root, "budget_usd": "7.5"})).unwrap()["budget_usd"], 7.5);
     }
 
     /// #504: the plan card is folded by a tool too (the app's button calls it), and says whether
