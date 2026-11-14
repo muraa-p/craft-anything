@@ -388,21 +388,8 @@ fn expected_number(message: &str) -> Option<ExpectedNumber> {
 
 /// If `message` says a number was expected and the value at `pointer` is a numeric string,
 /// replace it with the number and return `true`.
-fn coerce_numeric_string(value: &mut Value, pointer: Option<&str>, message: &str) -> bool {
-    let Some(pointer) = pointer.filter(|p| !p.is_empty()) else {
-        return false;
-    };
-    let Some(kind) = expected_number(message) else {
-        return false;
-    };
-    let Some(target) = value.pointer_mut(pointer) else {
-        return false;
-    };
-    let Some(text) = target.as_str() else {
-        return false;
-    };
-    let text = text.trim();
-    let number = match kind {
+fn parse_expected_number(text: &str, kind: ExpectedNumber) -> Option<serde_json::Number> {
+    match kind {
         ExpectedNumber::U8 => text.parse::<u8>().ok().map(|n| serde_json::Number::from(n as u64)),
         ExpectedNumber::U16 => text.parse::<u16>().ok().map(|n| serde_json::Number::from(n as u64)),
         ExpectedNumber::U32 => text.parse::<u32>().ok().map(|n| serde_json::Number::from(n as u64)),
@@ -424,11 +411,74 @@ fn coerce_numeric_string(value: &mut Value, pointer: Option<&str>, message: &str
                 text.parse::<f64>().ok().and_then(serde_json::Number::from_f64)
             }
         }
+    }
+}
+
+fn convert_sibling_numeric_strings(value: &mut Value, pointer: &str, kind: ExpectedNumber) {
+    // Split the pointer into its parent and the final segment.
+    let (parent_ptr, last) = match pointer.rfind('/') {
+        Some(0) => ("", &pointer[1..]),
+        Some(i) => (&pointer[..i], &pointer[i + 1..]),
+        None => return,
     };
+    if last.is_empty() {
+        return;
+    }
+    let parent = if parent_ptr.is_empty() {
+        value
+    } else {
+        match value.pointer_mut(parent_ptr) {
+            Some(p) => p,
+            None => return,
+        }
+    };
+    let Value::Array(items) = parent else {
+        return;
+    };
+    if last.parse::<usize>().is_ok() {
+        // The rejected value was one array element; convert every string element.
+        for item in items.iter_mut() {
+            if let Some(text) = item.as_str()
+                && let Some(number) = parse_expected_number(text.trim(), kind)
+            {
+                *item = Value::Number(number);
+            }
+        }
+    } else {
+        // The rejected value was a field inside each array element.
+        let field = last;
+        for item in items.iter_mut() {
+            if let Some(obj) = item.as_object_mut()
+                && let Some(v) = obj.get_mut(field)
+                && let Some(text) = v.as_str()
+                && let Some(number) = parse_expected_number(text.trim(), kind)
+            {
+                *v = Value::Number(number);
+            }
+        }
+    }
+}
+
+fn coerce_numeric_string(value: &mut Value, pointer: Option<&str>, message: &str) -> bool {
+    let Some(pointer) = pointer.filter(|p| !p.is_empty()) else {
+        return false;
+    };
+    let Some(kind) = expected_number(message) else {
+        return false;
+    };
+    let Some(target) = value.pointer_mut(pointer) else {
+        return false;
+    };
+    let Some(text) = target.as_str() else {
+        return false;
+    };
+    let text = text.trim();
+    let number = parse_expected_number(text, kind);
     let Some(number) = number else {
         return false;
     };
     *target = Value::Number(number);
+    convert_sibling_numeric_strings(value, pointer, kind);
     true
 }
 
