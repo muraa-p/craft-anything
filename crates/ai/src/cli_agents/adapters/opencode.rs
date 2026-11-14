@@ -128,7 +128,9 @@ impl AgentAdapter for OpenCode {
             None => self.process(program).args(args),
         };
         let out = proc.timeout(std::time::Duration::from_secs(30)).stdout_cap(64 * 1024).run().map_err(|e| e.with_remediation(by_hand.clone()))?;
-        if out.success {
+        if out.success || session_already_gone(&out) {
+            // A session the person (or an earlier sweep) already deleted is gone: there is nothing
+            // left to pick up, so the sweep has nothing to report (#1707).
             Ok(())
         } else {
             Err(ToolError::new(
@@ -273,6 +275,13 @@ fn error_text(error: &Value) -> String {
         (None, _) if error.is_null() || error.as_object().is_some_and(serde_json::Map::is_empty) => "the service returned no error details".into(),
         (None, _) => shorten(&error.to_string()),
     }
+}
+
+/// Whether a failed delete means the session is already gone: `opencode session delete` exits 1
+/// saying "Session not found: ses_…" when it isn't there, which is what a sweep asked for (#1707).
+fn session_already_gone(out: &craft_anything_platform::process::Output) -> bool {
+    let said = format!("{}\n{}", out.stdout_end_text(), out.stderr_end_text()).to_lowercase();
+    said.contains("session not found") || said.contains("session does not exist")
 }
 
 /// The first 300 characters of `text`, with an ellipsis when cut.
@@ -560,6 +569,26 @@ mod tests {
         let e = OpenCode.discard_unfinished("no-such-opencode-here", "ses_1", None).unwrap_err();
         assert_ne!(e.code, ErrorCode::BadInput, "{e:?}");
         assert!(e.remediation.as_deref().unwrap_or_default().contains("opencode session delete --standalone ses_1"), "{e:?}");
+    }
+
+    /// #1707: the sweep asked for a session that is already gone; a delete that says so has
+    /// done its job, while any other failure still needs reporting.
+    #[test]
+    fn a_delete_that_finds_the_session_gone_has_done_its_job() {
+        let failed = |stdout: &str, stderr: &str| craft_anything_platform::process::Output {
+            code: Some(1),
+            success: false,
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: stderr.as_bytes().to_vec(),
+            stdout_tail: Vec::new(),
+            stderr_tail: Vec::new(),
+            stdout_truncated: false,
+            stderr_truncated: false,
+            duration: std::time::Duration::ZERO,
+        };
+        assert!(session_already_gone(&failed("", "Session not found: ses_1")));
+        assert!(session_already_gone(&failed("session not found: ses_1\n", "")));
+        assert!(!session_already_gone(&failed("", "openCode is busy, try again")));
     }
 
     #[test]
