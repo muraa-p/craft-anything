@@ -308,15 +308,126 @@ pub fn empty_schema() -> Value {
 }
 
 /// Parse tool params; `null` is treated as `{}` so programmatic callers can omit them.
+///
+/// Some callers (notably AI models) send numbers as JSON strings. Those are coerced to the
+/// expected numeric type instead of being rejected, so a mistyped `"200"` does not fail the
+/// call (and trigger an endless retry loop, #1825).
 pub fn parse_params<T: DeserializeOwned>(v: Value) -> Result<T, ToolError> {
-    let v = if v.is_null() { Value::Object(Default::default()) } else { v };
-    serde_path_to_error::deserialize(v).map_err(|error| {
-        let pointer = parameter_pointer(error.path());
-        let location = pointer.as_deref().filter(|p| !p.is_empty()).map(|p| format!(" at {p:?}")).unwrap_or_default();
-        ToolError::invalid(format!("invalid params{location}: {}", error.inner()))
-            .with_remediation("Correct the parameter to match the tool's input schema, then call the tool again.")
-            .with_details(serde_json::json!({"parameter_path": pointer}))
-    })
+    let mut v = if v.is_null() { Value::Object(Default::default()) } else { v };
+    loop {
+        match serde_path_to_error::deserialize::<_, T>(&v) {
+            Ok(parsed) => return Ok(parsed),
+            Err(error) => {
+                let pointer = parameter_pointer(error.path());
+                let message = error.inner().to_string();
+                if coerce_numeric_string(&mut v, pointer.as_deref(), &message) {
+                    continue;
+                }
+                let location = pointer.as_deref().filter(|p| !p.is_empty()).map(|p| format!(" at {p:?}")).unwrap_or_default();
+                return Err(ToolError::invalid(format!("invalid params{location}: {message}"))
+                    .with_remediation("Correct the parameter to match the tool's input schema, then call the tool again.")
+                    .with_details(serde_json::json!({"parameter_path": pointer})));
+            }
+        }
+    }
+}
+
+/// The numeric type a rejected parameter was expected to be, taken from Serde's error text.
+#[derive(Clone, Copy)]
+enum ExpectedNumber {
+    U8,
+    U16,
+    U32,
+    U64,
+    Usize,
+    I8,
+    I16,
+    I32,
+    I64,
+    Isize,
+    F32,
+    F64,
+    Number,
+}
+
+fn expected_number(message: &str) -> Option<ExpectedNumber> {
+    let m = message.to_ascii_lowercase();
+    if !m.contains("expected") {
+        return None;
+    }
+    if m.contains("usize") {
+        Some(ExpectedNumber::Usize)
+    } else if m.contains("isize") {
+        Some(ExpectedNumber::Isize)
+    } else if m.contains("u64") {
+        Some(ExpectedNumber::U64)
+    } else if m.contains("u32") {
+        Some(ExpectedNumber::U32)
+    } else if m.contains("u16") {
+        Some(ExpectedNumber::U16)
+    } else if m.contains("u8") {
+        Some(ExpectedNumber::U8)
+    } else if m.contains("i64") {
+        Some(ExpectedNumber::I64)
+    } else if m.contains("i32") {
+        Some(ExpectedNumber::I32)
+    } else if m.contains("i16") {
+        Some(ExpectedNumber::I16)
+    } else if m.contains("i8") {
+        Some(ExpectedNumber::I8)
+    } else if m.contains("f64") {
+        Some(ExpectedNumber::F64)
+    } else if m.contains("f32") {
+        Some(ExpectedNumber::F32)
+    } else if m.contains("number") {
+        Some(ExpectedNumber::Number)
+    } else {
+        None
+    }
+}
+
+/// If `message` says a number was expected and the value at `pointer` is a numeric string,
+/// replace it with the number and return `true`.
+fn coerce_numeric_string(value: &mut Value, pointer: Option<&str>, message: &str) -> bool {
+    let Some(pointer) = pointer.filter(|p| !p.is_empty()) else {
+        return false;
+    };
+    let Some(kind) = expected_number(message) else {
+        return false;
+    };
+    let Some(target) = value.pointer_mut(pointer) else {
+        return false;
+    };
+    let Some(text) = target.as_str() else {
+        return false;
+    };
+    let text = text.trim();
+    let number = match kind {
+        ExpectedNumber::U8 => text.parse::<u8>().ok().map(|n| serde_json::Number::from(n as u64)),
+        ExpectedNumber::U16 => text.parse::<u16>().ok().map(|n| serde_json::Number::from(n as u64)),
+        ExpectedNumber::U32 => text.parse::<u32>().ok().map(|n| serde_json::Number::from(n as u64)),
+        ExpectedNumber::U64 => text.parse::<u64>().ok().map(serde_json::Number::from),
+        ExpectedNumber::Usize => text.parse::<usize>().ok().map(|n| serde_json::Number::from(n as u64)),
+        ExpectedNumber::I8 => text.parse::<i8>().ok().map(|n| serde_json::Number::from(n as i64)),
+        ExpectedNumber::I16 => text.parse::<i16>().ok().map(|n| serde_json::Number::from(n as i64)),
+        ExpectedNumber::I32 => text.parse::<i32>().ok().map(|n| serde_json::Number::from(n as i64)),
+        ExpectedNumber::I64 => text.parse::<i64>().ok().map(serde_json::Number::from),
+        ExpectedNumber::Isize => text.parse::<isize>().ok().map(|n| serde_json::Number::from(n as i64)),
+        ExpectedNumber::F32 => text.parse::<f32>().ok().and_then(|n| serde_json::Number::from_f64(n as f64)),
+        ExpectedNumber::F64 => text.parse::<f64>().ok().and_then(serde_json::Number::from_f64),
+        ExpectedNumber::Number => {
+            if let Ok(n) = text.parse::<i64>() {
+                Some(serde_json::Number::from(n))
+            } else {
+                text.parse::<f64>().ok().and_then(serde_json::Number::from_f64)
+            }
+        }
+    };
+    let Some(number) = number else {
+        return false;
+    };
+    *target = Value::Number(number);
+    true
 }
 
 /// A JSON Pointer to the rejected value, without guessing when Serde cannot locate it.
@@ -417,7 +528,8 @@ mod parameter_tests {
         }
         assert_eq!(parse_params::<Defaults>(Value::Null).unwrap(), Defaults::default());
         assert_eq!(parse_params::<Defaults>(json!({"count": 4})).unwrap().count, 4);
-        for input in [json!({"count": -1}), json!({"count": "4"}), json!({"count": u64::MAX})] {
+        assert_eq!(parse_params::<Defaults>(json!({"count": "4"})).unwrap().count, 4);
+        for input in [json!({"count": -1}), json!({"count": u64::MAX})] {
             let error = parse_params::<Defaults>(input).unwrap_err();
             assert_eq!(error.details.as_ref().unwrap()["parameter_path"], "/count");
         }
@@ -426,5 +538,27 @@ mod parameter_tests {
         assert_eq!(missing.details.as_ref().unwrap()["parameter_path"], "", "the known location is the parent object, not an invented missing value");
         let extra = parse_params::<Question>(json!({"question": "Where?", "surprise": true})).unwrap_err();
         assert!(extra.message.contains("unknown field `surprise`"));
+    }
+
+    #[test]
+    fn numeric_strings_are_coerced_to_their_expected_type() {
+        #[derive(Debug, Deserialize, PartialEq)]
+        struct Numbers {
+            limit: usize,
+            depth: u8,
+            timeout_secs: u64,
+            ratio: f64,
+        }
+        let parsed = parse_params::<Numbers>(json!({
+            "limit": "200",
+            "depth": "8",
+            "timeout_secs": "180",
+            "ratio": "1.5"
+        }))
+        .unwrap();
+        assert_eq!(parsed.limit, 200);
+        assert_eq!(parsed.depth, 8);
+        assert_eq!(parsed.timeout_secs, 180);
+        assert_eq!(parsed.ratio, 1.5);
     }
 }
