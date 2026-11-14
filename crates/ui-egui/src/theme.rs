@@ -230,27 +230,45 @@ pub fn install_fonts(ctx: &egui::Context) {
     add("DMSans-Bold", DM_SANS_BOLD);
     add("JetBrainsMono", JETBRAINS_MONO);
     let mut fallbacks = Vec::new();
+    let mut bold_fallbacks = Vec::new();
     for f in CRAFT_FONTS {
         let name = format!("craft:{}:{}", f.family, f.style);
         fonts.font_data.insert(name.clone(), Arc::new(FontData::from_static(f.bytes)));
         if f.style.eq_ignore_ascii_case("regular") {
             fallbacks.push(name);
+        } else if f.style.eq_ignore_ascii_case("bold") {
+            bold_fallbacks.push(name);
         }
     }
     // Sans first: a mincho/serif fallback makes Japanese and Chinese UI text look like prose.
     let fallbacks = sans_first(fallbacks);
+    let bold_fallbacks = sans_first(bold_fallbacks);
     fonts.families.entry(FontFamily::Proportional).or_default().insert(0, "DMSans".to_owned());
     fonts.families.entry(FontFamily::Monospace).or_default().insert(0, "JetBrainsMono".to_owned());
     for fam in [FontFamily::Proportional, FontFamily::Monospace] {
         fonts.families.entry(fam).or_default().extend(fallbacks.iter().cloned());
     }
     let base: Vec<String> = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
-    for (fam, primary) in [("medium", "DMSans-Medium"), ("semibold", "DMSans-Bold")] {
-        let mut stack = vec![primary.to_owned()];
-        stack.extend(base.iter().cloned());
-        fonts.families.insert(FontFamily::Name(fam.into()), stack);
+    for (fam, stack) in weighted_families(&base, &bold_fallbacks) {
+        fonts.families.insert(fam, stack);
     }
     ctx.set_fonts(fonts);
+}
+
+/// The medium and semibold families: DM Sans' own weight first, then a script's bold face from
+/// craft-fonts where it has one, then the whole proportional stack. Without the bold fallback a
+/// heading in Japanese or Chinese fell back to that script's regular face, so it looked lighter
+/// than the Latin beside it (#1808).
+fn weighted_families(base: &[String], bold: &[String]) -> Vec<(FontFamily, Vec<String>)> {
+    [("medium", "DMSans-Medium"), ("semibold", "DMSans-Bold")]
+        .into_iter()
+        .map(|(fam, primary)| {
+            let mut stack = vec![primary.to_owned()];
+            stack.extend(bold.iter().cloned());
+            stack.extend(base.iter().cloned());
+            (FontFamily::Name(fam.into()), stack)
+        })
+        .collect()
 }
 
 /// Fallback faces, most wanted first. A stable sort keeps the manifest's order inside a rank.
@@ -689,6 +707,23 @@ mod tests {
                 assert!(ctx.fonts_mut(|f| f.has_glyphs(&font, text)), "{script} ({text}) shows as boxes in {font:?}");
             }
         }
+    }
+
+    /// #1808: a heading's family takes a script's own bold face before its regular one, so
+    /// Japanese or Chinese headings aren't lighter than the Latin beside them.
+    #[test]
+    fn a_heading_takes_a_scripts_bold_face_before_its_regular_one() {
+        let base = vec!["DMSans".to_string(), "craft:japanese:regular".to_string()];
+        let bold = vec!["craft:japanese:bold".to_string()];
+        let families = weighted_families(&base, &bold);
+        let stack = |name: &str| {
+            families.iter().find(|(f, _)| f == &FontFamily::Name(name.into())).map(|(_, s)| s.clone()).unwrap_or_else(|| panic!("{name} is installed"))
+        };
+        assert_eq!(stack("semibold"), ["DMSans-Bold", "craft:japanese:bold", "DMSans", "craft:japanese:regular"]);
+        assert_eq!(stack("medium"), ["DMSans-Medium", "craft:japanese:bold", "DMSans", "craft:japanese:regular"]);
+        // Without a bold face the stack is what it always was.
+        let regular_only = weighted_families(&base, &[]);
+        assert_eq!(regular_only[1].1, ["DMSans-Bold", "DMSans", "craft:japanese:regular"]);
     }
 
     #[test]
