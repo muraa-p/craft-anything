@@ -39,7 +39,7 @@ pub fn specs() -> Vec<ToolSpec> {
         ToolSpec {
             id: "project_builder_set",
             title: "Choose what builds a project",
-            summary: "Choose the coding agent that builds a project's later changes, by an enabled AI backend's name; with `default`, the app's own choice builds it again. With no name, says which one is chosen and which one builds now. Takes effect from the next build, also from the CLI and over MCP.",
+            summary: "Choose the coding agent that builds a project's later changes, by an enabled AI backend's name; with `default`, the app's own choice builds it again. With no name, says which one is chosen and which one builds now (`builds` is null when no AI can build). Takes effect from the next build, also from the CLI and over MCP.",
             beginner: "Chooses which AI makes the changes in this project.",
             toolset: Toolset::Projects,
             effects: Effects::WRITES_FILESYSTEM,
@@ -345,7 +345,9 @@ fn project_builder_set(ctx: &mut Ctx<'_>, params: Value) -> Result<ToolOutput, T
             ws.set_person(|m| m.builder = Some(entry.config.name.clone()))?;
         }
     }
-    let builds = builder_backend(&cfg, project_builder(&cfg, &ws))?.config.name;
+    // With no AI able to build, the choice is still read (and `default` still clears it): the
+    // answer says so with `builds: null` instead of failing after the project changed.
+    let builds = builder_backend(&cfg, project_builder(&cfg, &ws)).ok().map(|b| b.config.name);
     Ok(ToolOutput::Value(json!({
         "project": ws.root,
         "builder": ws.manifest.builder,
@@ -780,6 +782,22 @@ mod tests {
         // `default` gives it back to the app's choice.
         let back = call(json!({"project": ws.root, "builder": "default"})).unwrap();
         assert_eq!((back["builder"].as_str(), back["builds"].as_str()), (None, Some("Claude")));
+        assert_eq!(Workspace::open(&ws.root).unwrap().manifest.builder, None);
+    }
+
+    /// With nothing able to build, the tool still reads the choice and still accepts `default`:
+    /// the answer says no AI builds instead of failing after the project changed.
+    #[test]
+    fn a_project_with_no_builder_says_nothing_builds_and_still_resets() {
+        let d = tempfile::tempdir().unwrap();
+        let e = Engine::shared(craft_anything_engine::testing::session(), specs());
+        let mut ws = Workspace::create(d.path(), "Notes", "A notes app", TargetRef::None).unwrap();
+        ws.set_person(|m| m.builder = Some("Gone".into())).unwrap();
+        let call = |p: Value| e.call("project_builder_set", p, CallOptions::new(Caller::Cli)).map(|o| o.to_json()["result"].clone());
+        let read = call(json!({"project": ws.root})).unwrap();
+        assert_eq!((read["builder"].as_str(), read["builds"].is_null()), (Some("Gone"), true), "{read}");
+        let reset = call(json!({"project": ws.root, "builder": "default"})).unwrap();
+        assert_eq!((reset["builder"].is_null(), reset["builds"].is_null()), (true, true), "{reset}");
         assert_eq!(Workspace::open(&ws.root).unwrap().manifest.builder, None);
     }
 
