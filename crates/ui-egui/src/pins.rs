@@ -101,6 +101,14 @@ impl CraftApp {
             ("project_pin_create", Ok(v)) => {
                 let name = v["pin"]["name"].as_str().unwrap_or_default();
                 self.toast(trf("Pinned: {name}. Open it from the sidebar any time.", &[("name", name)]), false);
+                if let Some(copied) = v["pin"]["copied_shared_bytes"].as_u64()
+                    && copied > 0
+                {
+                    // Not only a drive: a file can refuse a link for its own reasons (its link
+                    // limit, permissions), so the message says what is known, not the cause.
+                    let size = craft_anything_engine::evidence::human_bytes(copied);
+                    self.toast(trf("Some shared files could not be hard-linked and were copied instead ({size}).", &[("size", &size)]), false);
+                }
                 self.state.pins_collapsed = false;
                 self.refresh_pins();
             }

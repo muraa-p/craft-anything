@@ -1648,7 +1648,9 @@ Gaps found while using the app for real projects.
 Owner: maintainers · Status: in progress
 Keep a build that works at hand: pin it, and open it from the sidebar whatever the builder does
 to the project next.
-- [ ] Say when a light pin ended up copying what it meant to share (a drive without hard links)
+- [x] Say when a light pin ended up copying what it meant to share (a drive without hard links):
+      `copied_shared_bytes` on `Pin`, counted when a `Light` pin's file couldn't be linked, and said
+      in a toast with the size (`a_shared_file_that_cannot_be_linked_is_counted_as_copied`)
       — in PR #220
 - [ ] Pins of one project sharing with each other, so a third frozen copy of the same assets
       takes no more space

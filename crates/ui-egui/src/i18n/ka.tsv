@@ -1489,3 +1489,4 @@ Updated to {version}.	განახლდა {version} ვერსიამ�
 Use Releases or your package manager to update this installation.	ამ ინსტალაციის გასაახლებლად გამოიყენეთ გამოშვებები ან პაკეტების მმართველი.
 You're up to date.	უახლეს ვერსიას იყენებთ.
 {version} is available.	ხელმისაწვდომია {version}.
+Some shared files could not be hard-linked and were copied instead ({size}).	ზოგიერთი საერთო ფაილი მყარი ბმულით ვერ დაკავშირდა და დაკოპირდა ({size}).

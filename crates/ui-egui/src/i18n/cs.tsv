@@ -1489,3 +1489,4 @@ Updated to {version}.	Aktualizováno na {version}.
 Use Releases or your package manager to update this installation.	Aktualizujte tuto instalaci přes vydání nebo správce balíčků.
 You're up to date.	Máte nejnovější verzi.
 {version} is available.	Je dostupná verze {version}.
+Some shared files could not be hard-linked and were copied instead ({size}).	Některé sdílené soubory nešlo pevně propojit a byly zkopírovány ({size}).

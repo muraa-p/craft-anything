@@ -1489,3 +1489,4 @@ Updated to {version}.	อัปเดตเป็น {version} แล้ว
 Use Releases or your package manager to update this installation.	ใช้รุ่นที่เผยแพร่หรือตัวจัดการแพ็กเกจเพื่ออัปเดตการติดตั้งนี้
 You're up to date.	คุณใช้เวอร์ชันล่าสุดแล้ว
 {version} is available.	มี {version} พร้อมใช้งานแล้ว
+Some shared files could not be hard-linked and were copied instead ({size}).	ไฟล์ที่แชร์บางไฟล์สร้างฮาร์ดลิงก์ไม่ได้ จึงคัดลอกแทน ({size})

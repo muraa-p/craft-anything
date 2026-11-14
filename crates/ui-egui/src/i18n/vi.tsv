@@ -1489,3 +1489,4 @@ Updated to {version}.	Đã cập nhật lên {version}.
 Use Releases or your package manager to update this installation.	Dùng Bản phát hành hoặc trình quản lý gói để cập nhật bản cài đặt này.
 You're up to date.	Bạn đang dùng phiên bản mới nhất.
 {version} is available.	Đã có phiên bản {version}.
+Some shared files could not be hard-linked and were copied instead ({size}).	Một số tệp chia sẻ không thể tạo liên kết cứng nên đã được sao chép ({size}).
